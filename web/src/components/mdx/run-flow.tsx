@@ -1,11 +1,19 @@
-import { ArrowDown, ArrowRight, Bot, Cpu, MessageCircle, Sparkles, Wrench } from "lucide-react";
+import { Cpu, Wrench } from "lucide-react";
 import { motion } from "motion/react";
+import type { ComponentType } from "react";
 import { Fragment } from "react";
+import { ArrowDown } from "@/components/animate-ui/icons/arrow-down";
+import { ArrowRight } from "@/components/animate-ui/icons/arrow-right";
+import { Bot } from "@/components/animate-ui/icons/bot";
+import { MessageCircle } from "@/components/animate-ui/icons/message-circle";
+import { Sparkles } from "@/components/animate-ui/icons/sparkles";
 import { cn } from "@/lib/utils";
 
 type NodeKind = "user" | "agent" | "tool" | "model" | "output";
 
-const KIND: Record<NodeKind, { icon: typeof Bot; cls: string; dot: string }> = {
+type FlowIcon = ComponentType<{ className?: string; animateOnView?: boolean }>;
+
+const KIND: Record<NodeKind, { icon: FlowIcon; cls: string; dot: string }> = {
   user: {
     icon: MessageCircle,
     cls: "border-chart-3/40 bg-chart-3/10 text-chart-3",
@@ -62,7 +70,7 @@ export function RunFlow({ nodes, title }: { nodes: FlowNode[]; title?: string })
                     cls,
                   )}
                 >
-                  <Icon className="size-5" />
+                  <Icon className="size-5" animateOnView />
                   <span
                     className={cn(
                       "absolute -top-1 -right-1 grid size-4 place-items-center rounded-full text-[0.6rem] font-bold text-background",
@@ -104,8 +112,14 @@ export function RunFlow({ nodes, title }: { nodes: FlowNode[]; title?: string })
                       style={{ left: "50%", top: "50%", transform: "translate(-50%,-50%)" }}
                     />
                   </span>
-                  <ArrowDown className="size-4 shrink-0 text-muted-foreground md:hidden" />
-                  <ArrowRight className="hidden size-4 shrink-0 text-muted-foreground md:-ml-1 md:block" />
+                  <ArrowDown
+                    className="size-4 shrink-0 text-muted-foreground md:hidden"
+                    animateOnView
+                  />
+                  <ArrowRight
+                    className="hidden size-4 shrink-0 text-muted-foreground md:-ml-1 md:block"
+                    animateOnView
+                  />
                 </motion.li>
               ) : null}
             </Fragment>

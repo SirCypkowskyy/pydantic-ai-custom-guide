@@ -1,19 +1,19 @@
-# 07 - Wiadomości i historia
+# 07 - Messages and history
 
-Towarzyszy rozdziałowi [Wiadomości i historia](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/wiadomosci-historia).
+Accompanies the [Messages and history](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/wiadomosci-historia) chapter.
 
-Pokazuje, jak prowadzić wieloturową rozmowę przez przekazywanie `message_history`,
-jak czytać transkrypt przez `all_messages` i `new_messages` oraz jak serializować
-historię do JSON i odtwarzać ją z powrotem przy użyciu `ModelMessagesTypeAdapter`.
+Shows how to carry on a multi-turn conversation by passing `message_history`,
+how to read the transcript through `all_messages` and `new_messages`, and how to serialize
+the history to JSON and restore it back using `ModelMessagesTypeAdapter`.
 
-## Uruchomienie
+## Running
 
 ```bash
-# z katalogu sandbox/
+# from the sandbox/ directory
 uv run 07-wiadomosci-historia/main.py
 
 # smoke test
 uv run pytest 07-wiadomosci-historia/smoke_test.py
 ```
 
-Wymaga `OLLAMA_CLOUD_API_KEY` w pliku `.env` w katalogu głównym repozytorium.
+Requires `OLLAMA_CLOUD_API_KEY` in the `.env` file in the repository root.

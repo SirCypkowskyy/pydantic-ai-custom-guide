@@ -1,0 +1,256 @@
+Do tej pory wszystkie nasze zapytania były tekstem. Ale modele potrafią dziś więcej:
+przyjmują obrazy, dźwięk, wideo i dokumenty, a niektóre potrafią też „myśleć na głos",
+zanim wydadzą ostateczną odpowiedź. Pydantic AI daje na obie te rzeczy spójny,
+typowany interfejs, który działa tak samo niezależnie od dostawcy.
+
+W tym rozdziale poznasz dwa niezależne tematy. Najpierw multimodalne wejście, czyli
+przekazywanie do uruchomienia czegoś więcej niż zwykłego stringa. Potem mechanizm
+myślenia, czyli proszenie modelu o rozumowanie krok po kroku i odczytywanie tego
+rozumowania z odpowiedzi.
+
+## Lista zamiast stringa
+
+Kiedy wołasz `run_sync("...")`, przekazujesz pojedynczy string. Żeby dodać obraz albo
+dokument, przekazujesz zamiast tego listę. Lista może mieszać tekst z obiektami treści,
+a model dostaje wszystko razem jako jedno zapytanie użytkownika.
+
+```python
+from pydantic_ai import Agent, ImageUrl
+
+agent = Agent("openai:gpt-5.2")
+
+result = agent.run_sync(
+    [
+        "Z jakiej firmy pochodzi to logo?",
+        ImageUrl(url="https://iili.io/3Hs4FMg.png"),
+    ]
+)
+print(result.output)
+#> To logo biblioteki Pydantic, narzędzia do walidacji danych w Pythonie.
+```
+
+Kolejność elementów ma znaczenie. Tekst opisuje, co model ma zrobić, a obiekt treści
+dostarcza materiał. Możesz dodać kilka obrazów albo kilka pytań w jednej liście.
+
+## Pięć rodzajów treści
+
+Pydantic AI udostępnia osobny typ dla każdego rodzaju materiału. Cztery z nich opisują
+plik przez adres URL, a piąty, <Term definition="BinaryContent przenosi surowe bajty pliku razem z typem MIME. Używasz go, gdy masz dane lokalnie, a nie pod adresem URL.">BinaryContent</Term>,
+przenosi surowe bajty.
+
+| Typ | Do czego służy |
+| --- | --- |
+| `ImageUrl` | obraz pod adresem URL |
+| `AudioUrl` | nagranie audio pod adresem URL |
+| `VideoUrl` | wideo pod adresem URL |
+| `DocumentUrl` | dokument, na przykład PDF, pod adresem URL |
+| `BinaryContent` | surowe bajty dowolnego z powyższych |
+
+Gdy masz plik lokalnie, czytasz jego bajty i pakujesz je w `BinaryContent` razem z typem
+MIME. To samo zadziała dla obrazu, audio, wideo czy dokumentu, bo o rodzaju decyduje
+`media_type`.
+
+```python
+from pathlib import Path
+
+from pydantic_ai import Agent, BinaryContent
+
+agent = Agent("anthropic:claude-sonnet-4-6")
+
+pdf = Path("raport.pdf")
+result = agent.run_sync(
+    [
+        "Streść główne wnioski tego dokumentu.",
+        BinaryContent(data=pdf.read_bytes(), media_type="application/pdf"),
+    ]
+)
+print(result.output)
+#> Dokument omawia wyniki kwartalne oraz prognozy na kolejny rok.
+```
+
+<Callout kind="key">
+URL kontra bajty to nie tylko kwestia wygody. Gdy używasz typu `...Url`, Pydantic AI
+domyślnie wysyła sam adres, a plik pobiera dostawca po swojej stronie. `BinaryContent`
+zawsze wysyła dane, które masz w pamięci. To rozróżnienie decyduje o tym, kto musi mieć
+dostęp do pliku.
+</Callout>
+
+## TextContent, czyli tekst z metadanymi
+
+Czasem chcesz przekazać tekst, ale dołączyć do niego informację, której model nie
+powinien widzieć. Do tego służy `TextContent`. Pole `content` trafia do modelu jak
+zwykły string, ale `metadata` zostaje po stronie wiadomości i nigdy nie idzie do modelu.
+
+```python
+from pydantic_ai import Agent, TextContent
+
+agent = Agent("openai:gpt-5.2")
+
+result = agent.run_sync(
+    [
+        "Wypisz najważniejsze punkty z tego tekstu.",
+        TextContent(
+            content="Pydantic AI to framework agentowy dla Pythona.",
+            metadata={"source": "notatki.txt"},
+        ),
+    ]
+)
+print(result.output)
+```
+
+Metadane przydają się, gdy później przeglądasz historię wiadomości i chcesz wiedzieć,
+skąd dany fragment pochodził. Model ich nie widzi, więc nie zaśmiecają zapytania.
+
+## Wsparcie zależy od modelu
+
+Tu jest najważniejsza pułapka. Nie każdy model przyjmie każdy rodzaj treści, a nawet gdy
+przyjmie, sposób dostarczenia bywa różny. Dla jednego dostawcy `DocumentUrl` da się
+wysłać jako sam adres, a dla innego Pydantic AI musi najpierw pobrać plik i wysłać bajty.
+
+<Mermaid
+  caption="Co dzieje się z URL pliku zależnie od dostawcy"
+  chart={`flowchart TD
+    U[File URL part] --> Q{Provider wspiera ten URL?}
+    Q -->|tak, wysyła adres| P[Provider pobiera plik]
+    Q -->|tak, ale pobiera lokalnie| L[Pydantic AI pobiera bajty]
+    Q -->|nie| E[Brak wsparcia]
+    L --> S[Provider dostaje bajty]`}
+/>
+
+Kilka konkretów z aktualnej dokumentacji. `OpenAIChatModel` wysyła `ImageUrl` jako adres,
+a `AudioUrl` i `DocumentUrl` pobiera lokalnie i wysyła bajty, natomiast `VideoUrl` jest
+niewspierany. `AnthropicModel` przyjmuje `ImageUrl` i PDF jako `DocumentUrl`, ale nie
+obsługuje audio ani wideo. `GoogleModel` na Google Cloud przyjmuje wszystkie typy URL.
+
+<Callout kind="warning">
+Zanim zbudujesz pipeline na konkretnym typie wejścia, sprawdź w dokumentacji modelu, czy
+on go obsługuje. Wysłanie `VideoUrl` do modelu, który go nie przyjmuje, zakończy się
+błędem, a nie cichym pominięciem.
+</Callout>
+
+Gdy dostawca teoretycznie wspiera URL, ale w praktyce nie może pobrać pliku (na przykład
+przez ograniczenia dostępu), wymuś pobranie po stronie Pydantic AI parametrem
+`force_download=True` na obiekcie URL.
+
+```python
+from pydantic_ai import ImageUrl
+
+ImageUrl(url="https://example.com/obraz.png", force_download=True)
+```
+
+## Myślenie, czyli rozumowanie przed odpowiedzią
+
+Drugi temat tego rozdziału jest niezależny od multimodalności. <Term definition="Myślenie (reasoning) to proces, w którym model rozkłada problem na kroki, zanim poda ostateczną odpowiedź.">Myślenie</Term>
+to rozumowanie krok po kroku, które model wykonuje przed wydaniem finalnej odpowiedzi.
+Najprostszy sposób na włączenie go, działający u wielu dostawców, to capability `Thinking`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking
+
+agent = Agent(
+    "anthropic:claude-opus-4-7",
+    capabilities=[Thinking(effort="high")],
+)
+```
+
+To samo da się ustawić przez `model_settings`, podając wartość pod kluczem `thinking`.
+Obie drogi prowadzą do tego samego miejsca, ale capability jest czytelniejsze.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent("anthropic:claude-opus-4-7", model_settings={"thinking": "high"})
+```
+
+## Poziomy wysiłku
+
+Pole `effort` w `Thinking` przyjmuje kilka rodzajów wartości. Możesz włączyć myślenie z
+domyślnym poziomem dostawcy, wyłączyć je albo wybrać konkretny poziom wysiłku. Jeśli dany
+poziom nie jest wspierany przez model, Pydantic AI mapuje go na najbliższy dostępny.
+
+| Wartość `effort` | Znaczenie |
+| --- | --- |
+| `True` | myślenie z domyślnym poziomem dostawcy |
+| `False` | wyłączone, ciche zignorowanie u modeli zawsze myślących |
+| `"minimal"` | najniższy nakład rozumowania |
+| `"low"` | niski nakład |
+| `"medium"` | średni nakład |
+| `"high"` | wysoki nakład |
+| `"xhigh"` | maksymalny, na przykład Claude Opus 4.7 i 4.8 |
+
+<Callout kind="note">
+Capability `Thinking` tłumaczy te poziomy na natywny format każdego dostawcy. Dla OpenAI
+staje się to `reasoning_effort`, dla Anthropic adaptacyjne myślenie z poziomem wysiłku, a
+dla Gemini 3+ pole `thinking_level`. Nie musisz znać tych szczegółów, dopóki nie
+potrzebujesz drobnego strojenia.
+</Callout>
+
+## ThinkingPart w odpowiedzi
+
+Kiedy model myśli, jego rozumowanie wraca jako osobne części wiadomości typu
+`ThinkingPart`, oddzielone od finalnego tekstu. Możesz je odczytać, przeglądając
+wiadomości z uruchomienia. Dzięki temu pokażesz użytkownikowi tok myślenia albo zapiszesz
+go do logów, nie mieszając go z właściwą odpowiedzią.
+
+<RunFlow
+  title="Przebieg uruchomienia z włączonym myśleniem"
+  nodes={[
+    { kind: "user", label: "Zapytanie", detail: "tekst plus opcjonalny obraz" },
+    { kind: "agent", label: "Agent", detail: "dokłada ustawienie thinking" },
+    { kind: "model", label: "Model", detail: "rozumuje, potem odpowiada" },
+    { kind: "output", label: "Wynik", detail: "ThinkingPart plus output" },
+  ]}
+/>
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking
+from pydantic_ai.messages import ThinkingPart
+
+agent = Agent("anthropic:claude-opus-4-7", capabilities=[Thinking(effort="medium")])
+
+result = agent.run_sync("Ile to jest 17 razy 24, i jak to policzyłeś?")
+for message in result.all_messages():
+    for part in message.parts:
+        if isinstance(part, ThinkingPart):
+            print("Rozumowanie:", part.content)
+
+print("Odpowiedź:", result.output)
+```
+
+Dla niektórych dostawców, na przykład części API zgodnych z OpenAI, surowe rozumowanie
+trafia nie do `content`, tylko do `provider_details['raw_content']`. To celowe: OpenAI
+zaleca, żeby surowego rozumowania nie pokazywać użytkownikom wprost.
+
+## Strojenie pod konkretnego dostawcę
+
+Capability `Thinking` wystarcza w większości przypadków. Gdy potrzebujesz pełnej kontroli,
+sięgasz po ustawienia konkretnego dostawcy. Dla Anthropic to `anthropic_thinking`, dla
+Google `google_thinking_config`, dla Groq `groq_reasoning_format`. Te ustawienia mają
+pierwszeństwo, gdy podasz je razem z capability.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+
+model = GoogleModel("gemini-3.5-flash")
+settings = GoogleModelSettings(
+    google_thinking_config={"include_thoughts": True, "thinking_level": "MEDIUM"},
+)
+agent = Agent(model, model_settings=settings)
+```
+
+<Callout kind="tip">
+Zacznij od `Thinking(effort="...")` i zostań przy nim tak długo, jak się da. Po natywne
+ustawienia dostawcy sięgaj dopiero wtedy, gdy potrzebujesz czegoś, czego ujednolicony
+interfejs nie udostępnia, na przykład interleaved thinking u Anthropic albo konkretnego
+budżetu tokenów na starszych modelach.
+</Callout>
+
+## Co dalej
+
+Umiesz już przekazywać obrazy, audio, wideo i dokumenty oraz włączać i odczytywać
+rozumowanie modelu. Oba mechanizmy łączą się naturalnie: możesz wysłać obraz i poprosić
+model, żeby przemyślał odpowiedź. W następnym rozdziale zajmiemy się kolejnym tematem z
+przewodnika. Działający kod do tego rozdziału znajdziesz w `sandbox/18-multimodal-myslenie`.

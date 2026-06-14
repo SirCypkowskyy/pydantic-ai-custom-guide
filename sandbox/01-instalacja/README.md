@@ -1,18 +1,18 @@
-# 01 - Instalacja
+# 01 - Installation
 
-Towarzyszy rozdziałowi [Instalacja](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/instalacja).
+Accompanies the [Installation](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/instalacja) chapter.
 
-Pokazuje najprostszy możliwy program z Pydantic AI: po instalacji pakietu tworzysz jednego
-agenta ze statycznymi instrukcjami i wywołujesz `run_sync`, żeby otrzymać odpowiedź od modelu.
+Shows the simplest possible program with Pydantic AI: after installing the package you create one
+agent with static instructions and call `run_sync` to get a response from the model.
 
-## Uruchomienie
+## Running
 
 ```bash
-# z katalogu sandbox/
+# from the sandbox/ directory
 uv run 01-instalacja/main.py
 
 # smoke test
 uv run pytest 01-instalacja/smoke_test.py
 ```
 
-Wymaga `OLLAMA_CLOUD_API_KEY` w pliku `.env` w katalogu głównym repozytorium.
+Requires `OLLAMA_CLOUD_API_KEY` in the `.env` file in the repository root.

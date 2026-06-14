@@ -177,6 +177,249 @@ text, the agent returns one of two clearly described shapes, and ordinary Python
 site handles the rest.
 </Callout>
 
+## Output functions
+
+Instead of a Pydantic model, you can hand `output_type` a plain function. Pydantic AI validates
+the arguments the model produces, calls your function, and its return value becomes the run's
+output. This is handy when you want to further process the data, fetch something from a database,
+or hand the task off to another agent. An output function behaves like a tool, with three
+differences: the model is forced to call one of them, the call ends the run, and the result is
+not passed back to the model.
+
+The function can optionally take `RunContext` as its first argument and can raise `ModelRetry`
+to ask the model for corrected arguments.
+
+```python
+import re
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, ModelRetry
+
+
+class Row(BaseModel):
+    name: str
+    country: str
+
+
+tables = {
+    "capitals": [
+        Row(name="Amsterdam", country="Netherlands"),
+        Row(name="Mexico City", country="Mexico"),
+    ]
+}
+
+
+def run_query(query: str) -> list[Row]:
+    """Run a SQL query on the database."""
+
+    match = re.match(r"SELECT \* FROM (\w+)", query)
+    if not match:
+        raise ModelRetry(f"Unsupported query: {query!r}.")
+
+    table = match.group(1)
+    if table not in tables:
+        raise ModelRetry(
+            f"Unknown table {table!r}. Available: {', '.join(tables)}."
+        )
+    return tables[table]
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    output_type=run_query,
+    instructions="You are a SQL agent. Turn requests into SQL and run them.",
+)
+
+result = agent.run_sync("Give me all the capitals.")
+print(result.output)
+#> [Row(name='Amsterdam', country='Netherlands'), Row(name='Mexico City', country='Mexico')]
+```
+
+By default a function that takes a string also gets an output tool. If you would rather have the
+model provide text as a plain response and let your function process it, wrap it in the
+`TextOutput` marker.
+
+```python
+from pydantic_ai import Agent, TextOutput
+
+
+def into_words(text: str) -> list[str]:
+    return text.split()
+
+
+agent = Agent("openai:gpt-5.2", output_type=TextOutput(into_words))
+
+result = agent.run_sync("Who was Albert Einstein?")
+print(result.output)
+#> ['Albert', 'Einstein', 'was', 'a', 'German-born', 'theoretical', 'physicist.']
+```
+
+<Callout kind="tip">
+An output function is a natural way to delegate work between agents. A router function can call
+`await other_agent.run(...)` inside itself and return its result, and the model never needs to
+know a second agent is doing the work underneath.
+</Callout>
+
+## Custom JSON schema and validation context
+
+Sometimes you cannot describe the output with a Pydantic model, because the JSON schema comes
+from an external source or is built dynamically while the program runs. For that, use
+`StructuredDict()`. You get a `dict[str, Any]` subclass with an attached schema that Pydantic AI
+passes to the model.
+
+```python
+from pydantic_ai import Agent, StructuredDict
+
+HumanDict = StructuredDict(
+    {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"},
+        },
+        "required": ["name", "age"],
+    },
+    name="Human",
+    description="A human with a name and age.",
+)
+
+agent = Agent("openai:gpt-5.2", output_type=HumanDict)
+result = agent.run_sync("Create a person.")
+print(result.output)
+#> {'name': 'John Doe', 'age': 30}
+```
+
+<Callout kind="warning">
+With `StructuredDict()` Pydantic AI does not validate the received object. The output is a plain
+dict, and it is your code that must read from it defensively in case the model made a mistake.
+You can add validation in `@agent.output_validator` and raise `ModelRetry` to have the model try
+again.
+</Callout>
+
+When validation needs extra data from outside the response itself, pass it through the
+`validation_context` parameter. It reaches Pydantic validators for both the output and tool
+arguments. Importantly, this context is not included in the prompts sent to the model; it is
+used only for validation on the Python side.
+
+```python
+from pydantic import BaseModel, ValidationInfo, field_validator
+
+from pydantic_ai import Agent
+
+
+class Value(BaseModel):
+    x: int
+
+    @field_validator("x")
+    def add_offset(cls, value: int, info: ValidationInfo):
+        return value + (info.context or 0)
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    output_type=Value,
+    validation_context=10,
+)
+result = agent.run_sync("Give me a value of 5.")
+print(repr(result.output))  # 5 from the model + 10 from the validation context
+#> Value(x=15)
+```
+
+## Optional output and images
+
+Some agents do all their work through tools and do not need to return a final result. Certain
+models return an empty response in that case, which by default forces a retry. If you want an
+empty response to count as a successful run, include `None` in `output_type`.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent("anthropic:claude-opus-4-6", output_type=str | None)
+
+
+@agent.tool_plain
+def mark_task_done(task_id: int) -> str:
+    """Mark the task as done."""
+    return f"Task {task_id} marked done."
+
+
+result = agent.run_sync("Mark task 1 as done, then stop without saying anything.")
+print(result.output)
+#> None
+```
+
+`output_type=str | None` is the canonical case: it is treated as ordinary text output, where the
+only signal for `None` is an empty response. `None` on its own is not valid; you always need to
+provide at least one other type alongside it.
+
+Some models can also generate images. To make an image the agent's output, set `output_type` to
+`BinaryImage`. If no image-generating tool is explicitly enabled, Pydantic AI adds the
+`ImageGenerationTool` automatically.
+
+```python
+from pydantic_ai import Agent, BinaryImage
+
+agent = Agent("openai-responses:gpt-5.2", output_type=BinaryImage)
+
+result = agent.run_sync("Generate an image of an axolotl.")
+assert isinstance(result.output, BinaryImage)
+```
+
+<Callout kind="key">
+When an agent does not always need to produce an image, use a union of `BinaryImage | str`. If
+the model returns both, the image takes precedence and the text is available on
+`result.response.text`.
+</Callout>
+
+## Cancelling a stream
+
+Sometimes you need to stop a stream before it finishes: a user clicks "stop" in a chat, or you
+already have enough data to make a decision. Call `cancel()` on the `StreamedRunResult`, and
+Pydantic AI asks the provider to stop generating and closes the connection.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent("openai:gpt-5.2")
+
+
+async def main():
+    async with agent.run_stream("Write a long essay about Python") as result:
+        text = ""
+        async for chunk in result.stream_text(delta=True):
+            text += chunk
+            if len(text) > 100:
+                await result.cancel()
+                break
+        print(result.cancelled)
+        #> True
+        print(result.response.state == "interrupted")
+        #> True
+```
+
+After cancellation the final `ModelResponse` gets `state='interrupted'`, so downstream code can
+recognise the incomplete response. The event stream from `run_stream_events()` has no `cancel()`
+method, but you use it as a context manager and simply leaving the `async with` block cleans up
+the resources.
+
+<RunFlow
+  title="A cancelled stream"
+  nodes={[
+    { kind: "user", label: "Prompt", detail: "asks for a long text" },
+    { kind: "model", label: "Stream", detail: "tokens arrive in chunks" },
+    { kind: "agent", label: "cancel()", detail: "condition is met" },
+    { kind: "output", label: "State", detail: "interrupted" },
+  ]}
+/>
+
+<Callout kind="warning">
+A cancelled stream can leave incomplete tool calls in the history. Pydantic AI does not clean
+these up, so before reusing such history check `state == 'interrupted'` and decide yourself
+whether to keep or discard it. Token usage after cancellation is also partial and
+provider-dependent, so do not rely on it for cost accounting.
+</Callout>
+
 ## What is next
 
 You can now force an agent to return data that matches a Pydantic model, add your own validation

@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
-import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
+import { AnimateIcon } from "@/components/animate-ui/icons/icon";
+import { Search } from "@/components/animate-ui/icons/search";
 import { ChapterIcon } from "@/components/chapter-icon";
 import { GithubIcon } from "@/components/icons/github-icon";
 import { LanguageToggle } from "@/components/language-toggle";
@@ -41,17 +42,19 @@ export function SiteHeader() {
       <SidebarTrigger className="text-muted-foreground" />
       <Separator orientation="vertical" className="mr-1 h-5" />
 
-      <button
-        type="button"
-        onClick={() => setSearchOpen(true)}
-        className="inline-flex h-9 flex-1 items-center gap-2 rounded-lg border bg-card/60 px-3 text-sm text-muted-foreground transition-colors hover:bg-card sm:max-w-xs"
-      >
-        <Search className="size-4" />
-        <span className="flex-1 text-left">{t("sidebar.search")}</span>
-        <kbd className="hidden rounded border bg-muted px-1.5 font-mono text-[0.65rem] sm:inline">
-          ⌘K
-        </kbd>
-      </button>
+      <AnimateIcon animateOnHover asChild>
+        <button
+          type="button"
+          onClick={() => setSearchOpen(true)}
+          className="inline-flex h-9 flex-1 items-center gap-2 rounded-lg border bg-card/60 px-3 text-sm text-muted-foreground transition-colors hover:bg-card sm:max-w-xs"
+        >
+          <Search className="size-4" />
+          <span className="flex-1 text-left">{t("sidebar.search")}</span>
+          <kbd className="hidden rounded border bg-muted px-1.5 font-mono text-[0.65rem] sm:inline">
+            ⌘K
+          </kbd>
+        </button>
+      </AnimateIcon>
 
       <div className="ml-auto flex items-center gap-1.5">
         <LanguageToggle />
@@ -77,20 +80,21 @@ export function SiteHeader() {
               {chapters
                 .filter((c) => c.partId === part.id)
                 .map((chapter) => (
-                  <CommandItem
-                    key={chapter.slug}
-                    value={`${chapter.order} ${chapter.title[lang]} ${chapter.title.en}`}
-                    onSelect={() => {
-                      setSearchOpen(false);
-                      void navigate({ to: "/chapters/$slug", params: { slug: chapter.slug } });
-                    }}
-                  >
-                    <ChapterIcon name={chapter.icon} className="text-muted-foreground" />
-                    <span>
-                      <span className="text-muted-foreground tabular-nums">{chapter.order}.</span>{" "}
-                      {chapter.title[lang]}
-                    </span>
-                  </CommandItem>
+                  <AnimateIcon key={chapter.slug} animateOnHover asChild>
+                    <CommandItem
+                      value={`${chapter.order} ${chapter.title[lang]} ${chapter.title.en}`}
+                      onSelect={() => {
+                        setSearchOpen(false);
+                        void navigate({ to: "/chapters/$slug", params: { slug: chapter.slug } });
+                      }}
+                    >
+                      <ChapterIcon name={chapter.icon} className="text-muted-foreground" />
+                      <span>
+                        <span className="text-muted-foreground tabular-nums">{chapter.order}.</span>{" "}
+                        {chapter.title[lang]}
+                      </span>
+                    </CommandItem>
+                  </AnimateIcon>
                 ))}
             </CommandGroup>
           ))}

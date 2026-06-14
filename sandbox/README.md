@@ -1,44 +1,44 @@
-# Sandbox - działające przykłady Pydantic AI
+# Sandbox - working Pydantic AI examples
 
-Seria mini-projektów w Pythonie, po jednym na rozdział przewodnika. Każdy jest osobnym
-pakietem w przestrzeni roboczej `uv`, ze ścisłą konfiguracją Ruff i basedpyright. Przykłady
-korzystają z modeli na **Ollama Cloud**.
+A series of mini-projects in Python, one per guide chapter. Each is a separate
+package in a `uv` workspace, with strict Ruff and basedpyright configuration. The examples
+use models on **Ollama Cloud**.
 
-## Wymagania
+## Requirements
 
 - [uv](https://docs.astral.sh/uv/)
-- Klucz `OLLAMA_CLOUD_API_KEY` w pliku `.env` w katalogu głównym repozytorium
-  (skopiuj `sandbox/.env.example`).
+- An `OLLAMA_CLOUD_API_KEY` key in the `.env` file in the repository root
+  (copy `sandbox/.env.example`).
 
-## Instalacja
+## Installation
 
 ```bash
 cd sandbox
 uv sync --all-packages
 ```
 
-## Uruchamianie
+## Running
 
 ```bash
-# pojedynczy przykład
+# a single example
 uv run 02-agenty/main.py
 
-# wszystkie smoke testy (pomijane, gdy brak klucza API)
+# all smoke tests (skipped when the API key is missing)
 uv run pytest
 ```
 
-## Jakość
+## Quality
 
 ```bash
-uv run ruff check .          # lint (reguły "ALL" z wąską listą wyjątków)
-uv run ruff format --check . # formatowanie
-uv run basedpyright          # typy
+uv run ruff check .          # lint ("ALL" rules with a narrow list of exceptions)
+uv run ruff format --check . # formatting
+uv run basedpyright          # types
 ```
 
-## Struktura
+## Structure
 
-- `shared/` - wspólny pakiet `pai_sandbox_shared` z fabryką modelu (`ollama_model`).
-- `NN-nazwa/` - projekt przypisany do rozdziału `NN`, z `main.py`, `smoke_test.py` i `README.md`.
+- `shared/` - the shared `pai_sandbox_shared` package with the model factory (`ollama_model`).
+- `NN-name/` - a project tied to chapter `NN`, with `main.py`, `smoke_test.py` and `README.md`.
 
-Domyślny model to `gemma3:12b` (szybki, do smoke testów). Zmienisz go przez zmienną
-`OLLAMA_MODEL` albo argument `ollama_model("nazwa-modelu")`.
+The default model is `gemma3:12b` (fast, for smoke tests). You can change it via the
+`OLLAMA_MODEL` variable or the `ollama_model("model-name")` argument.

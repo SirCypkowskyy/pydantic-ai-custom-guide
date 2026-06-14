@@ -20,40 +20,56 @@ akceptacji trzyma człowieka w pętli.
   ]}
 />
 
-## Umiejętności jako zestawy narzędzi
+## Umiejętności jako capabilities
 
-W Pydantic AI umiejętność albo wtyczka to po prostu <Term definition="Toolset to nazwany zbiór narzędzi, który można dołączyć do agenta. Pozwala grupować i włączać umiejętności niezależnie.">zestaw narzędzi</Term>.
-Każdy zestaw grupuje powiązane funkcje, a agent dostaje ich tyle, ile chcesz mu dać przy
-danym uruchomieniu. Dzięki temu umiejętności włączasz i wyłączasz jak wtyczki, bez
-przepisywania agenta.
+Najwierniejszym odpowiednikiem umiejętności i wtyczek Claude jest w Pydantic AI
+<Term definition="Capability to wielokrotnego użytku, składalna jednostka zachowania agenta. Może wnosić narzędzia, instrukcje, ustawienia modelu i hooki cyklu życia naraz.">capability</Term>.
+Jedna capability pakuje powiązane narzędzia, instrukcje, ustawienia modelu i hooki w jeden
+moduł, który podajesz przez `capabilities=`. To jest główny mechanizm rozszerzeń frameworka.
+
+Co więcej, z `defer_loading=True` capability staje się ładowana na żądanie, dokładnie tak
+jak skille w Claude. Model widzi najpierw jednolinijkowy wpis w katalogu, a pełną
+umiejętność (jej narzędzia i instrukcje) wczytuje dopiero wtedy, gdy jej potrzebuje, przez
+wbudowane narzędzie `load_capability`. To ta sama progresywna prezentacja, z której słynie
+Claude.
 
 ```python
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
 
-# Umiejętność "pogoda" jako osobny zestaw narzędzi.
-pogoda = FunctionToolset()
+# Umiejętność "pogoda" jako capability ładowana na żądanie.
+pogoda = Capability(
+    id="pogoda",
+    description="Sprawdzanie pogody dla miasta.",
+    instructions="Podawaj temperaturę zwięźle.",
+    defer_loading=True,
+)
 
 
-@pogoda.tool
-def temperatura(ctx: RunContext[None], miasto: str) -> str:
+@pogoda.tool_plain
+def temperatura(miasto: str) -> str:
     """Zwróć aktualną temperaturę dla miasta."""
     return f"W mieście {miasto} jest 18 stopni."
 
 
 agent = Agent(
     "openai:gpt-5.2",
-    instructions="Jesteś pomocnym asystentem. Korzystaj z dostępnych narzędzi.",
-    toolsets=[pogoda],
+    instructions="Jesteś pomocnym asystentem.",
+    capabilities=[pogoda],
 )
 ```
 
-Każdy kolejny zestaw to kolejna wtyczka. Możesz mieć osobno umiejętność do plików, do
-kalendarza i do wyszukiwania, a potem składać agenta z dowolnej ich kombinacji.
+W pierwszej turze capability jest zwinięta do wpisu w katalogu. Gdy model uzna, że jej
+potrzebuje, woła `load_capability`, a wtedy narzędzia i instrukcje tej umiejętności stają
+się aktywne na kolejne żądania. Każda kolejna umiejętność to kolejny moduł na liście
+`capabilities`, więc składasz agenta dokładnie jak z wtyczek.
 
-<Callout kind="tip">
-Trzymaj jedną umiejętność w jednym zestawie narzędzi. Łatwiej je wtedy testować osobno,
-a przy budowaniu agenta wybierasz tylko te, których naprawdę potrzebujesz w danym trybie.
+<Callout kind="key">
+Capability wnosi więcej niż narzędzia. Razem z nimi aktywują się instrukcje, ustawienia
+modelu i hooki cyklu życia. Pydantic AI ma też gotowe, natywne capabilities, na przykład
+`Thinking()` (rozumowanie) czy wyszukiwanie w sieci, które dokładasz na tej samej liście,
+aby dać asystentowi te zdolności, które kojarzysz z Claude. Więcej w rozdziale
+„Capabilities i hooki".
 </Callout>
 
 ## Serwery MCP jako zewnętrzne wtyczki
@@ -182,7 +198,7 @@ stoją poważne asystenty.[^claude]
 ## Co dalej
 
 Pełną, działającą wersję tego asystenta, łącznie z pętlą akceptacji w terminalu, znajdziesz
-w `sandbox/16-asystent-jak-claude`. To dobry punkt wyjścia do własnego projektu: dołóż swoje
+w `sandbox/20-asystent-jak-claude`. To dobry punkt wyjścia do własnego projektu: dołóż swoje
 zestawy narzędzi, podłącz serwer MCP, którego używasz na co dzień, i podepnij interfejs.
 
 [^claude]: Sam Claude Code działa na podobnych zasadach: umiejętności, serwery MCP i prośba o zgodę przy wrażliwych operacjach.

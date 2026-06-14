@@ -1,7 +1,10 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, Sparkles, Terminal } from "lucide-react";
 import { motion } from "motion/react";
 import { Code, CodeBlock, CodeHeader } from "@/components/animate-ui/components/animate/code";
+import { ArrowRight } from "@/components/animate-ui/icons/arrow-right";
+import { AnimateIcon } from "@/components/animate-ui/icons/icon";
+import { Sparkles } from "@/components/animate-ui/icons/sparkles";
+import { Terminal } from "@/components/animate-ui/icons/terminal";
 import { Button } from "@/components/ui/button";
 import { chapters } from "@/content/curriculum";
 import { useLanguage } from "@/hooks/use-language";
@@ -48,7 +51,7 @@ export function HomeHero() {
             transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
             className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-sm font-medium text-muted-foreground"
           >
-            <Sparkles className="size-3.5 text-primary" />
+            <Sparkles className="size-3.5 text-primary" animateOnView />
             {t("home.hero.kicker")}
           </motion.span>
 
@@ -75,12 +78,14 @@ export function HomeHero() {
             transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
             className="flex flex-wrap items-center gap-3"
           >
-            <Button asChild size="lg" className="group gap-2">
-              <Link to="/chapters/$slug" params={{ slug: chapters[0]?.slug ?? "instalacja" }}>
-                {t("home.hero.cta")}
-                <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
-              </Link>
-            </Button>
+            <AnimateIcon animateOnHover asChild>
+              <Button asChild size="lg" className="group gap-2">
+                <Link to="/chapters/$slug" params={{ slug: chapters[0]?.slug ?? "instalacja" }}>
+                  {t("home.hero.cta")}
+                  <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+                </Link>
+              </Button>
+            </AnimateIcon>
             <Button asChild size="lg" variant="outline">
               <Link to="/chapters">{t("home.hero.ctaSecondary")}</Link>
             </Button>

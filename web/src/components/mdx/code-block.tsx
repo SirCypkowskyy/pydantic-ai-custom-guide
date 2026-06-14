@@ -1,5 +1,7 @@
-import { Check, Copy } from "lucide-react";
 import { type ComponentPropsWithoutRef, useRef, useState } from "react";
+import { Check } from "@/components/animate-ui/icons/check";
+import { Copy } from "@/components/animate-ui/icons/copy";
+import { AnimateIcon } from "@/components/animate-ui/icons/icon";
 import { cn } from "@/lib/utils";
 
 /**
@@ -24,14 +26,16 @@ export function Pre({ className, children, ...props }: ComponentPropsWithoutRef<
 
   return (
     <div className="group relative my-6 overflow-hidden rounded-xl border bg-[#fbfaf8] dark:bg-[#1d1a18]">
-      <button
-        type="button"
-        onClick={copy}
-        aria-label="Copy code"
-        className="absolute top-2.5 right-2.5 z-10 grid size-8 place-items-center rounded-md border bg-background/80 text-muted-foreground opacity-0 backdrop-blur transition-all hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
-      >
-        {copied ? <Check className="size-4 text-chart-5" /> : <Copy className="size-4" />}
-      </button>
+      <AnimateIcon animateOnHover asChild>
+        <button
+          type="button"
+          onClick={copy}
+          aria-label="Copy code"
+          className="absolute top-2.5 right-2.5 z-10 grid size-8 place-items-center rounded-md border bg-background/80 text-muted-foreground opacity-0 backdrop-blur transition-all hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          {copied ? <Check className="size-4 text-chart-5" /> : <Copy className="size-4" />}
+        </button>
+      </AnimateIcon>
       <pre
         ref={ref}
         className={cn(

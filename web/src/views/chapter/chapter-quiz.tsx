@@ -1,7 +1,12 @@
-import { ArrowRight, Check, RotateCcw, Trophy, X } from "lucide-react";
+import { Trophy } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { ArrowRight } from "@/components/animate-ui/icons/arrow-right";
+import { Check } from "@/components/animate-ui/icons/check";
+import { AnimateIcon } from "@/components/animate-ui/icons/icon";
+import { RotateCcw } from "@/components/animate-ui/icons/rotate-ccw";
+import { X } from "@/components/animate-ui/icons/x";
 import { CountingNumber } from "@/components/animate-ui/primitives/texts/counting-number";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -81,10 +86,12 @@ export function ChapterQuiz({ slug, quiz }: { slug: string; quiz: ChapterQuizDat
               </span>
             </span>
           ) : null}
-          <Button onClick={() => setPhase("active")} className="gap-2">
-            {t("quiz.start")}
-            <ArrowRight className="size-4" />
-          </Button>
+          <AnimateIcon animateOnHover asChild>
+            <Button onClick={() => setPhase("active")} className="gap-2">
+              {t("quiz.start")}
+              <ArrowRight className="size-4" />
+            </Button>
+          </AnimateIcon>
         </div>
       </Card>
     );
@@ -114,9 +121,9 @@ export function ChapterQuiz({ slug, quiz }: { slug: string; quiz: ChapterQuizDat
           {quiz.questions.map((q, i) => (
             <div key={q.prompt[lang]} className="flex items-start gap-2 text-sm">
               {answers[i] ? (
-                <Check className="mt-0.5 size-4 shrink-0 text-chart-5" />
+                <Check className="mt-0.5 size-4 shrink-0 text-chart-5" animateOnView />
               ) : (
-                <X className="mt-0.5 size-4 shrink-0 text-destructive" />
+                <X className="mt-0.5 size-4 shrink-0 text-destructive" animateOnView />
               )}
               <span>
                 <span className="font-medium">{q.prompt[lang]}</span>
@@ -125,10 +132,12 @@ export function ChapterQuiz({ slug, quiz }: { slug: string; quiz: ChapterQuizDat
             </div>
           ))}
         </div>
-        <Button variant="outline" onClick={reset} className="gap-2">
-          <RotateCcw className="size-4" />
-          {t("quiz.retry")}
-        </Button>
+        <AnimateIcon animateOnHover asChild>
+          <Button variant="outline" onClick={reset} className="gap-2">
+            <RotateCcw className="size-4" />
+            {t("quiz.retry")}
+          </Button>
+        </AnimateIcon>
       </Card>
     );
   }
@@ -183,9 +192,11 @@ export function ChapterQuiz({ slug, quiz }: { slug: string; quiz: ChapterQuizDat
                 >
                   <RadioGroupItem id={optionId} value={String(i)} disabled={checked} />
                   <span className="flex-1">{opt.text[lang]}</span>
-                  {checked && isCorrect ? <Check className="size-4 text-chart-5" /> : null}
+                  {checked && isCorrect ? (
+                    <Check className="size-4 text-chart-5" animateOnView />
+                  ) : null}
                   {checked && isSelected && !isCorrect ? (
-                    <X className="size-4 text-destructive" />
+                    <X className="size-4 text-destructive" animateOnView />
                   ) : null}
                 </label>
               );
@@ -203,10 +214,12 @@ export function ChapterQuiz({ slug, quiz }: { slug: string; quiz: ChapterQuizDat
 
       <div className="flex justify-end">
         {checked ? (
-          <Button onClick={advance} className="gap-2">
-            {current + 1 < total ? t("quiz.next") : t("quiz.finish")}
-            <ArrowRight className="size-4" />
-          </Button>
+          <AnimateIcon animateOnHover asChild>
+            <Button onClick={advance} className="gap-2">
+              {current + 1 < total ? t("quiz.next") : t("quiz.finish")}
+              <ArrowRight className="size-4" />
+            </Button>
+          </AnimateIcon>
         ) : (
           <Button onClick={check} disabled={selected === null}>
             {t("quiz.check")}

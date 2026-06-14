@@ -1,21 +1,21 @@
 # 04 - Structured output
 
-Towarzyszy rozdziałowi [Structured output](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/structured-output).
+Accompanies the [Structured output](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/structured-output) chapter.
 
-Pokazuje, jak zamiast surowego tekstu otrzymać typowany obiekt:
+Shows how to get a typed object instead of raw text:
 
-- model `BaseModel` jako `output_type`, dzięki czemu `result.output` jest sparsowanym obiektem,
-- unię modeli z `PromptedOutput`, gdzie agent sam wybiera właściwy kształt odpowiedzi,
-- `output_validator` z `ModelRetry`, który wymusza poprawę błędnej odpowiedzi.
+- a `BaseModel` model as the `output_type`, so that `result.output` is a parsed object,
+- a union of models with `PromptedOutput`, where the agent itself picks the right shape of the response,
+- an `output_validator` with `ModelRetry`, which forces a faulty response to be corrected.
 
-## Uruchomienie
+## Running
 
 ```bash
-# z katalogu sandbox/
+# from the sandbox/ directory
 uv run 04-structured-output/main.py
 
 # smoke test
 uv run pytest 04-structured-output/smoke_test.py
 ```
 
-Wymaga `OLLAMA_CLOUD_API_KEY` w pliku `.env` w katalogu głównym repozytorium.
+Requires `OLLAMA_CLOUD_API_KEY` in the `.env` file in the repository root.

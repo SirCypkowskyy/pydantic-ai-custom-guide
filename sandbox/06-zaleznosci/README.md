@@ -1,20 +1,20 @@
-# 06 - Zaleznosci (DI)
+# 06 - Dependencies (DI)
 
-Towarzyszy rozdziałowi [Zależności](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/zaleznosci).
+Accompanies the [Dependencies](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/zaleznosci) chapter.
 
-Pokazuje wstrzykiwanie zależności (dependency injection) w Pydantic AI: typowana
-dataklasa `SupportDeps` przekazywana przez `deps=` przy każdym uruchomieniu, a następnie
-odczytywana w dynamicznej instrukcji oraz w narzędziu przez `RunContext`. Ten sam agent
-zachowuje się inaczej dla różnych klientów, bez zmiany jego definicji.
+Shows dependency injection in Pydantic AI: a typed
+`SupportDeps` dataclass passed via `deps=` on every run, then
+read in a dynamic instruction and in a tool through `RunContext`. The same agent
+behaves differently for different clients, without changing its definition.
 
-## Uruchomienie
+## Running
 
 ```bash
-# z katalogu sandbox/
+# from the sandbox/ directory
 uv run 06-zaleznosci/main.py
 
 # smoke test
 uv run pytest 06-zaleznosci/smoke_test.py
 ```
 
-Wymaga `OLLAMA_CLOUD_API_KEY` w pliku `.env` w katalogu głównym repozytorium.
+Requires `OLLAMA_CLOUD_API_KEY` in the `.env` file in the repository root.

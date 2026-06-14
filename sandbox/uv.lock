@@ -20,6 +20,10 @@ members = [
     "ch14-pydantic-settings",
     "ch15-fastapi-integracja",
     "ch16-asystent-jak-claude",
+    "ch16-capabilities-hooki",
+    "ch17-zaawansowane-narzedzia",
+    "ch18-multimodal-myslenie",
+    "ch19-embeddingi-rag",
     "pai-sandbox-shared",
     "pydantic-ai-sandbox",
 ]
@@ -640,7 +644,67 @@ requires-dist = [
 [[package]]
 name = "ch16-asystent-jak-claude"
 version = "0.1.0"
-source = { virtual = "16-asystent-jak-claude" }
+source = { virtual = "20-asystent-jak-claude" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch16-capabilities-hooki"
+version = "0.1.0"
+source = { virtual = "16-capabilities-hooki" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch17-zaawansowane-narzedzia"
+version = "0.1.0"
+source = { virtual = "17-zaawansowane-narzedzia" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch18-multimodal-myslenie"
+version = "0.1.0"
+source = { virtual = "18-multimodal-myslenie" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch19-embeddingi-rag"
+version = "0.1.0"
+source = { virtual = "19-embeddingi-rag" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },

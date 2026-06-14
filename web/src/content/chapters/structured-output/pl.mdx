@@ -177,6 +177,244 @@ agent zwraca jeden z dwóch jasno opisanych kształtów, a resztą zajmuje się 
 Pythona po stronie wywołania.
 </Callout>
 
+## Funkcje wyjścia
+
+Zamiast modelu Pydantic możesz przekazać do `output_type` zwykłą funkcję. Pydantic AI
+zwaliduje argumenty wygenerowane przez model, wywoła twoją funkcję i jej wynik stanie się
+wyjściem uruchomienia. To wygodne, gdy chcesz dodatkowo przetworzyć dane, sięgnąć po coś
+z bazy albo przekazać zadanie innemu agentowi. Funkcja wyjścia działa podobnie do narzędzia,
+z trzema różnicami: model jest zmuszony jedną z nich wywołać, wywołanie kończy uruchomienie,
+a wynik nie wraca do modelu.
+
+Funkcja może opcjonalnie przyjąć `RunContext` jako pierwszy argument i może podnieść
+`ModelRetry`, żeby poprosić model o poprawione argumenty.
+
+```python
+import re
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, ModelRetry
+
+
+class Wiersz(BaseModel):
+    nazwa: str
+    kraj: str
+
+
+tabele = {
+    "stolice": [
+        Wiersz(nazwa="Amsterdam", kraj="Holandia"),
+        Wiersz(nazwa="Meksyk", kraj="Meksyk"),
+    ]
+}
+
+
+def wykonaj_zapytanie(zapytanie: str) -> list[Wiersz]:
+    """Wykonaj zapytanie SQL na bazie danych."""
+
+    dopasowanie = re.match(r"SELECT \* FROM (\w+)", zapytanie)
+    if not dopasowanie:
+        raise ModelRetry(f"Nieobsługiwane zapytanie: {zapytanie!r}.")
+
+    tabela = dopasowanie.group(1)
+    if tabela not in tabele:
+        raise ModelRetry(
+            f"Nieznana tabela {tabela!r}. Dostępne: {', '.join(tabele)}."
+        )
+    return tabele[tabela]
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    output_type=wykonaj_zapytanie,
+    instructions="Jesteś agentem SQL. Zamieniaj zapytania na SQL i wykonuj je.",
+)
+
+result = agent.run_sync("Podaj wszystkie stolice.")
+print(result.output)
+#> [Wiersz(nazwa='Amsterdam', kraj='Holandia'), Wiersz(nazwa='Meksyk', kraj='Meksyk')]
+```
+
+Domyślnie funkcja przyjmująca stringa też dostaje narzędzie wyjścia. Jeśli wolisz, żeby model
+podał tekst zwykłą odpowiedzią, a twoja funkcja go przetworzyła, owiń ją markerem `TextOutput`.
+
+```python
+from pydantic_ai import Agent, TextOutput
+
+
+def na_slowa(tekst: str) -> list[str]:
+    return tekst.split()
+
+
+agent = Agent("openai:gpt-5.2", output_type=TextOutput(na_slowa))
+
+result = agent.run_sync("Kim był Albert Einstein?")
+print(result.output)
+#> ['Albert', 'Einstein', 'był', 'niemieckim', 'fizykiem', 'teoretycznym.']
+```
+
+<Callout kind="tip">
+Funkcja wyjścia to naturalny sposób na delegowanie zadań między agentami. Funkcja routera
+może wewnątrz wywołać `await inny_agent.run(...)` i zwrócić jego wynik, a model w ogóle nie
+musi wiedzieć, że pod spodem działa drugi agent.
+</Callout>
+
+## Własny schemat JSON i kontekst walidacji
+
+Czasem nie da się opisać wyjścia modelem Pydantic, bo schemat JSON przychodzi z zewnątrz albo
+powstaje dynamicznie w trakcie działania programu. Wtedy użyj `StructuredDict()`. Dostajesz
+podklasę `dict[str, Any]` z dołączonym schematem, który Pydantic AI przekaże modelowi.
+
+```python
+from pydantic_ai import Agent, StructuredDict
+
+OsobaDict = StructuredDict(
+    {
+        "type": "object",
+        "properties": {
+            "imie": {"type": "string"},
+            "wiek": {"type": "integer"},
+        },
+        "required": ["imie", "wiek"],
+    },
+    name="Osoba",
+    description="Osoba z imieniem i wiekiem.",
+)
+
+agent = Agent("openai:gpt-5.2", output_type=OsobaDict)
+result = agent.run_sync("Stwórz osobę.")
+print(result.output)
+#> {'imie': 'Jan Kowalski', 'wiek': 30}
+```
+
+<Callout kind="warning">
+Przy `StructuredDict()` Pydantic AI nie waliduje odebranego obiektu. Wynik to zwykły słownik
+i to twój kod musi go ostrożnie odczytać na wypadek, gdyby model się pomylił. Walidację możesz
+dorzucić w `@agent.output_validator` i podnieść `ModelRetry`, żeby model spróbował jeszcze raz.
+</Callout>
+
+Kiedy walidacja potrzebuje dodatkowych danych spoza samej odpowiedzi, przekaż je przez parametr
+`validation_context`. Trafi on do walidatorów Pydantic zarówno przy wyjściu, jak i przy
+argumentach narzędzi. Co ważne, ten kontekst nie ląduje w promptach wysyłanych do modelu, służy
+tylko walidacji po stronie Pythona.
+
+```python
+from pydantic import BaseModel, ValidationInfo, field_validator
+
+from pydantic_ai import Agent
+
+
+class Wartosc(BaseModel):
+    x: int
+
+    @field_validator("x")
+    def dodaj_przesuniecie(cls, value: int, info: ValidationInfo):
+        return value + (info.context or 0)
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    output_type=Wartosc,
+    validation_context=10,
+)
+result = agent.run_sync("Podaj wartość 5.")
+print(repr(result.output))  # 5 od modelu + 10 z kontekstu walidacji
+#> Wartosc(x=15)
+```
+
+## Wyjście opcjonalne i obrazy
+
+Niektóre agenty wykonują całą pracę przez narzędzia i nie muszą zwracać żadnego wyniku
+końcowego. Część modeli zwraca wtedy pustą odpowiedź, co domyślnie wymusza ponowienie. Jeśli
+chcesz, żeby pusta odpowiedź była uznana za udane uruchomienie, dołącz `None` do `output_type`.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent("anthropic:claude-opus-4-6", output_type=str | None)
+
+
+@agent.tool_plain
+def oznacz_zadanie(zadanie_id: int) -> str:
+    """Oznacz zadanie jako wykonane."""
+    return f"Zadanie {zadanie_id} oznaczone jako wykonane."
+
+
+result = agent.run_sync("Oznacz zadanie 1 jako wykonane i nic nie mów.")
+print(result.output)
+#> None
+```
+
+`output_type=str | None` to przypadek wzorcowy: traktowany jak zwykły tekst, gdzie jedynym
+sygnałem `None` jest pusta odpowiedź. Sam `None` bez innego typu nie jest poprawny, zawsze
+musisz podać przynajmniej jeden dodatkowy typ.
+
+Część modeli potrafi też generować obrazy. Aby obraz stał się wyjściem agenta, ustaw
+`output_type` na `BinaryImage`. Jeśli żadne narzędzie do generowania obrazów nie jest jawnie
+włączone, Pydantic AI samo dołączy `ImageGenerationTool`.
+
+```python
+from pydantic_ai import Agent, BinaryImage
+
+agent = Agent("openai-responses:gpt-5.2", output_type=BinaryImage)
+
+result = agent.run_sync("Wygeneruj obraz aksolotla.")
+assert isinstance(result.output, BinaryImage)
+```
+
+<Callout kind="key">
+Gdy agent nie zawsze ma generować obraz, użyj unii `BinaryImage | str`. Jeśli model zwróci
+oba, pierwszeństwo ma obraz, a tekst znajdziesz w `result.response.text`.
+</Callout>
+
+## Przerywanie strumienia
+
+Czasem trzeba zatrzymać strumień przed jego zakończeniem: użytkownik klika „przerwij" w czacie
+albo masz już dość danych, żeby podjąć decyzję. Wywołaj `cancel()` na `StreamedRunResult`,
+a Pydantic AI poprosi dostawcę o przerwanie generowania i zamknie połączenie.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent("openai:gpt-5.2")
+
+
+async def main():
+    async with agent.run_stream("Napisz długi esej o Pythonie") as result:
+        tekst = ""
+        async for fragment in result.stream_text(delta=True):
+            tekst += fragment
+            if len(tekst) > 100:
+                await result.cancel()
+                break
+        print(result.cancelled)
+        #> True
+        print(result.response.state == "interrupted")
+        #> True
+```
+
+Po przerwaniu finalny `ModelResponse` dostaje stan `state='interrupted'`, więc dalszy kod
+pozna niekompletną odpowiedź. Strumień zdarzeń z `run_stream_events()` nie ma metody `cancel()`,
+ale używasz go jako menedżera kontekstu i samo wyjście z bloku `async with` posprząta zasoby.
+
+<RunFlow
+  title="Przebieg przerwanego strumienia"
+  nodes={[
+    { kind: "user", label: "Zapytanie", detail: "prośba o długi tekst" },
+    { kind: "model", label: "Strumień", detail: "tokeny lecą fragmentami" },
+    { kind: "agent", label: "cancel()", detail: "warunek spełniony" },
+    { kind: "output", label: "Stan", detail: "interrupted" },
+  ]}
+/>
+
+<Callout kind="warning">
+Przerwany strumień może zostawić niekompletne wywołania narzędzi w historii. Pydantic AI ich
+nie czyści, więc przed ponownym użyciem takiej historii sprawdź `state == 'interrupted'`
+i zdecyduj sam, czy ją zachować, czy odrzucić. Zużycie tokenów po przerwaniu też jest
+częściowe i zależne od dostawcy, więc nie polegaj na nim przy rozliczaniu kosztów.
+</Callout>
+
 ## Co dalej
 
 Umiesz już zmusić agenta do zwracania danych zgodnych z modelem Pydantic, dorzucić własną

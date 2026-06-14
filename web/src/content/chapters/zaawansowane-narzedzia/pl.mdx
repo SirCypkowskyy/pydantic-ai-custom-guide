@@ -1,0 +1,374 @@
+Podstawowe narzędzie to funkcja z dekoratorem `@agent.tool`. To wystarcza w wielu projektach,
+ale prędzej czy później pojawiają się trudniejsze pytania. Jak udostępnić narzędzie tylko w części
+przebiegu? Jak zmusić model, żeby coś wywołał? Jak zwrócić obraz razem z tekstem? Jak złożyć
+kilkadziesiąt narzędzi w spójną, testowalną całość?
+
+Ten rozdział zbiera zaawansowane mechanizmy narzędzi w Pydantic AI: dynamiczne definicje, sterowanie
+wyborem narzędzia, bogate wartości zwracane, ponawianie i limity czasu, wykonywanie równoległe oraz
+algebrę toolsetów. Na końcu dokładamy narzędzia wykonywane po stronie dostawcy i gotowe narzędzia
+wyszukiwania.
+
+## Dynamiczne narzędzia z prepare
+
+Czasem narzędzie powinno być widoczne dla modelu tylko w pewnych warunkach, albo jego opis powinien
+zależeć od danych. Do tego służy funkcja `prepare`. Jest wywoływana na każdym kroku przebiegu,
+dostaje `RunContext` oraz gotowy `ToolDefinition`, i zwraca jedną z trzech rzeczy: ten sam
+`ToolDefinition`, zmodyfikowany `ToolDefinition`, albo `None`. Zwrócenie `None` oznacza, że w tym
+kroku narzędzia nie ma.
+
+```python
+from pydantic_ai import Agent, RunContext, ToolDefinition
+
+agent = Agent("test")
+
+
+async def only_if_42(
+    ctx: RunContext[int], tool_def: ToolDefinition
+) -> ToolDefinition | None:
+    if ctx.deps == 42:
+        return tool_def
+    return None
+
+
+@agent.tool(prepare=only_if_42)
+def hitchhiker(ctx: RunContext[int], answer: str) -> str:
+    return f"{ctx.deps} {answer}"
+
+
+result = agent.run_sync("testuję...", deps=41)
+print(result.output)
+#> success (no tool calls)
+result = agent.run_sync("testuję...", deps=42)
+print(result.output)
+#> {"hitchhiker":"42 a"}
+```
+
+Funkcja typu `ToolPrepareFunc` może też zmieniać sam schemat. Możesz na przykład dopisać opis do
+parametru w zależności od `ctx.deps`, zanim definicja trafi do modelu. To wygodny sposób, by jedno
+narzędzie dostosowywało się do kontekstu, zamiast tworzyć kilka osobnych wersji.
+
+<Callout kind="note">
+`prepare` działa na poziomie pojedynczego narzędzia. Jeśli chcesz włączać lub wyłączać wiele narzędzi
+naraz albo zmienić je globalnie, sięgnij po `prepare_tools` opisane niżej.
+</Callout>
+
+## prepare_tools dla całego agenta
+
+Obok `prepare` dla pojedynczego narzędzia istnieje funkcja `prepare_tools` działająca dla całego
+agenta. Dostaje `RunContext` oraz listę wszystkich `ToolDefinition` (z narzędzi i z toolsetów) i
+zwraca nową listę definicji. To dobre miejsce na logikę globalną: wyłączenie grupy narzędzi, zmiana
+opisów albo ustawienie trybu strict dla wszystkich narzędzi.
+
+```python
+from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
+from pydantic_ai.capabilities import PrepareTools
+
+
+def launch_potato(target: str) -> str:
+    return f"Ziemniak wystrzelony w {target}!"
+
+
+async def filter_out_tools_by_name(
+    ctx: RunContext[bool], tool_defs: list[ToolDefinition]
+) -> list[ToolDefinition] | None:
+    if ctx.deps:
+        return [td for td in tool_defs if td.name != "launch_potato"]
+    return tool_defs
+
+
+agent = Agent(
+    "test",
+    tools=[Tool(launch_potato)],
+    capabilities=[PrepareTools(filter_out_tools_by_name)],
+    deps_type=bool,
+)
+
+result = agent.run_sync("testuję...", deps=False)
+print(result.output)
+#> {"launch_potato":"Ziemniak wystrzelony w a!"}
+result = agent.run_sync("testuję...", deps=True)
+print(result.output)
+#> success (no tool calls)
+```
+
+Jeśli używasz obu mechanizmów naraz, najpierw dla każdego narzędzia z osobna stosowane jest jego
+`prepare`, a dopiero potem `prepare_tools` dostaje wynikową listę.
+
+<Callout kind="warning">
+Zwrócenie `None` z `prepare_tools` wyłącza wszystkie narzędzia na danym kroku i jest traktowane jako
+przestarzałe zachowanie. Aby zostawić narzędzia bez zmian, zwróć argument `tool_defs`. Aby celowo nie
+udostępnić żadnego narzędzia, zwróć pustą listę `[]`.
+</Callout>
+
+## Sterowanie wyborem narzędzia
+
+Ustawienie `tool_choice` w `ModelSettings` decyduje, czy i jakie narzędzia model może wywołać w danym
+żądaniu. Dotyczy ono narzędzi funkcyjnych, a nie wewnętrznych narzędzi wyniku.
+
+| Wartość | Znaczenie |
+| --- | --- |
+| `'auto'` (domyślnie) | model sam decyduje, wszystkie narzędzia dostępne |
+| `'none'` | narzędzia funkcyjne wyłączone, model odpowiada tekstem |
+| `'required'` | model musi wywołać jakieś narzędzie funkcyjne |
+| `['nazwa_a', ...]` | ograniczenie do konkretnych narzędzi po nazwie |
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ToolOrOutput
+
+agent = Agent(TestModel())
+
+
+@agent.tool_plain
+def get_weather(city: str) -> str:
+    return f"Słonecznie w {city}"
+
+
+@agent.tool_plain
+def get_time(city: str) -> str:
+    return f"12:00 w {city}"
+
+
+# Wyłącz narzędzia funkcyjne na czas tego żądania
+result = agent.run_sync("Cześć", model_settings={"tool_choice": "none"})
+
+# Ogranicz do jednego narzędzia, ale zostaw narzędzia wyniku
+result = agent.run_sync(
+    "Cześć",
+    model_settings={"tool_choice": ToolOrOutput(function_tools=["get_weather"])},
+)
+```
+
+<Callout kind="warning">
+Wartości `'required'` oraz lista nazw wykluczają narzędzia wyniku. Ustawione statycznie na całe
+uruchomienie zmusiłyby model do wywoływania narzędzia na każdym kroku i nie pozwoliłyby zwrócić
+ostatecznej odpowiedzi, dlatego `agent.run()` zgłasza wtedy błąd. Aby zmieniać `tool_choice` zależnie
+od kroku, zwróć ustawienia z capability `get_model_settings` albo użyj bezpośredniego żądania modelu.
+</Callout>
+
+## Bogate wartości zwracane z ToolReturn
+
+Domyślnie narzędzie zwraca to, co Pydantic potrafi zserializować do JSON. Może też zwrócić treść
+multimodalną, na przykład `ImageUrl` albo `DocumentUrl`. Kiedy potrzebujesz większej kontroli,
+sięgnij po `ToolReturn`. Rozdziela on trzy rzeczy: wartość zwracaną aplikacji, treść wysyłaną do
+modelu jako osobna wiadomość użytkownika oraz metadane, których model nigdy nie zobaczy.
+
+```python
+from pydantic_ai import Agent, BinaryContent, ToolReturn
+from pydantic_ai.models.test import TestModel
+
+agent = Agent(TestModel())
+
+
+@agent.tool_plain
+def click_and_capture(x: int, y: int) -> ToolReturn:
+    """Kliknij we współrzędne i pokaż zrzuty przed i po."""
+    before = BinaryContent(data=b"\x89PNG", media_type="image/png")
+    after = BinaryContent(data=b"\x89PNG", media_type="image/png")
+    return ToolReturn(
+        return_value=f"Kliknięto w ({x}, {y})",
+        content=["Przed:", before, "Po:", after],
+        metadata={"coordinates": {"x": x, "y": y}, "action": "click"},
+    )
+
+
+result = agent.run_sync("Kliknij przycisk wyślij i powiedz, co się stało")
+print(result.output)
+#> {"click_and_capture":"Kliknięto w (0, 0)"}
+```
+
+Pole `return_value` to wynik trafiający do modelu jako rezultat narzędzia. Pole `content` to treść
+wysyłana osobno, idealna dla obrazów do analizy. Pole `metadata` zostaje po stronie aplikacji, więc
+nadaje się do logów i debugowania. Niektóre frameworki nazywają tę funkcję „artefaktami".
+
+## Ponawianie i limity czasu
+
+Kiedy model przekaże narzędziu błędne argumenty, Pydantic AI sam zgłasza `RetryPromptPart` z
+informacją o błędzie i pozwala modelowi spróbować ponownie. Możesz też ponowienie wymusić ręcznie,
+zgłaszając `ModelRetry` z wnętrza narzędzia. To przydatne, gdy argumenty były poprawne typowo, ale
+coś poszło nie tak w trakcie wykonania.
+
+```python
+from pydantic_ai import ModelRetry
+
+
+def my_flaky_tool(query: str) -> str:
+    if query == "bad":
+        raise ModelRetry("Zapytanie 'bad' jest niedozwolone. Podaj inne.")
+    return "Sukces!"
+```
+
+Limit ponowień ustawisz per narzędzie przez `Tool(max_retries=N)` lub `@agent.tool(retries=N)`, per
+toolset przez `FunctionToolset(max_retries=N)`, albo dla całego agenta przez
+`Agent(retries={'tools': N})`. Liczniki są prowadzone osobno dla każdego narzędzia. Po wyczerpaniu
+limitu przebieg kończy się wyjątkiem `UnexpectedModelBehavior`.
+
+Osobno działa limit czasu. Ustaw `tool_timeout` na agencie jako wartość domyślną, a `timeout` na
+konkretnym narzędziu, aby ją nadpisać. Przekroczenie limitu jest traktowane jak błąd i również
+wysyła do modelu prompt ponowienia, licząc się do limitu ponowień.
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+
+agent = Agent("test", tool_timeout=30)
+
+
+@agent.tool_plain
+async def slow_tool() -> str:
+    """Używa domyślnego limitu agenta (30 sekund)."""
+    await asyncio.sleep(10)
+    return "Gotowe"
+
+
+@agent.tool_plain(timeout=5)
+async def fast_tool() -> str:
+    """Ma własny limit (5 sekund), który nadpisuje domyślny."""
+    await asyncio.sleep(1)
+    return "Gotowe"
+```
+
+## Wykonywanie równoległe kontra sekwencyjne
+
+Gdy model zwróci w jednej odpowiedzi kilka wywołań narzędzi, Pydantic AI uruchamia je współbieżnie
+przez `asyncio.create_task`. Funkcje asynchroniczne idą na pętlę zdarzeń, a synchroniczne są
+przenoszone do wątków. Dlatego dla prostych operacji warto pisać funkcje asynchroniczne, a do wątków
+oddawać tylko blokujące I/O albo prace obciążające procesor.
+
+<RunFlow
+  title="Kilka wywołań narzędzi z jednej odpowiedzi modelu"
+  nodes={[
+    { kind: "model", label: "Model", detail: "zwraca trzy wywołania" },
+    { kind: "tool", label: "Narzędzie A", detail: "task współbieżny" },
+    { kind: "tool", label: "Narzędzie B", detail: "task współbieżny" },
+    { kind: "agent", label: "Agent", detail: "zbiera wyniki" },
+  ]}
+/>
+
+Jeśli narzędzie wymaga wykonania szeregowego, oznacz je flagą `sequential` przy rejestracji albo
+otocz przebieg menedżerem kontekstu
+`agent.parallel_tool_call_execution_mode('sequential')`. Liczbę wywołań w jednym przebiegu ograniczysz
+przez `UsageLimits(tool_calls_limit=...)`.
+
+## Algebra toolsetów
+
+Toolset to kolekcja narzędzi, którą rejestrujesz hurtem i składasz z innymi. `FunctionToolset` udostępnia
+lokalne funkcje, a dekorator `@toolset.tool` dodaje do niego narzędzia. Kilka toolsetów łączysz w
+jeden przez `CombinedToolset`, a każdy toolset ma metody, które zwracają jego zmodyfikowaną wersję.
+
+| Metoda | Co robi |
+| --- | --- |
+| `.filtered(fn)` | zostawia tylko narzędzia, dla których `fn` zwraca prawdę |
+| `.prefixed(prefix)` | dodaje przedrostek do nazw, by uniknąć kolizji |
+| `.renamed(mapping)` | zmienia nazwy według słownika nowa na starą |
+| `.prepared(fn)` | modyfikuje listę definicji jak `prepare_tools` |
+| `.approval_required(fn)` | wymaga zatwierdzenia wybranych wywołań |
+
+```python
+from pydantic_ai import Agent, CombinedToolset, FunctionToolset
+from pydantic_ai.models.test import TestModel
+
+
+def temperature_celsius(city: str) -> float:
+    return 21.0
+
+
+def temperature_fahrenheit(city: str) -> float:
+    return 69.8
+
+
+weather = FunctionToolset(tools=[temperature_celsius, temperature_fahrenheit])
+combined = CombinedToolset([weather.prefixed("weather")])
+
+# Zostaw tylko stopnie Celsjusza
+filtered = combined.filtered(lambda ctx, td: "fahrenheit" not in td.name)
+
+agent = Agent(TestModel(), toolsets=[filtered])
+result = agent.run_sync("Jakie narzędzia są dostępne?")
+print([t.name for t in result.all_messages()])
+```
+
+Te metody zwracają nowe toolsety, więc łatwo je łączyć w łańcuch. Możesz na przykład napisać
+`weather.prefixed("weather").filtered(...).prepared(...)`. `PreparedToolset` nie potrafi dodawać ani
+zmieniać nazw narzędzi, do tego służą `FunctionToolset.add_function()` oraz `RenamedToolset`.
+
+<Mermaid
+  caption="Składanie toolsetów w łańcuch przekształceń"
+  chart={`flowchart LR
+    W[weather toolset] --> P[prefixed weather]
+    D[datetime toolset] --> C[CombinedToolset]
+    P --> C
+    C --> F[filtered]
+    F --> R[prepared]
+    R --> A[Agent]`}
+/>
+
+## Zatwierdzanie wywołań
+
+`ApprovalRequiredToolset`, dostępny przez `.approval_required(fn)`, pozwala wymagać ludzkiego
+zatwierdzenia dla wybranych wywołań. Funkcja dostaje `RunContext`, `ToolDefinition` oraz
+zwalidowane argumenty i zwraca, czy dane wywołanie wymaga zgody. Aby obsłużyć takie przebiegi, dodaj
+`DeferredToolRequests` do `output_type`. Run kończy się wtedy obiektem z listą oczekujących wywołań,
+a wyniki zatwierdzeń przekazujesz w kolejnym uruchomieniu przez `deferred_tool_results`.
+
+## Narzędzia wykonywane po stronie dostawcy
+
+Część narzędzi wykonuje sam dostawca modelu, a nie Pydantic AI. Przekazujesz je w liście
+`capabilities`, owinięte w `NativeTool`. Najczęściej używane to `WebSearchTool` do wyszukiwania w sieci
+i `CodeExecutionTool` do uruchamiania kodu w bezpiecznym środowisku.
+
+```python
+from pydantic_ai import Agent, WebSearchTool
+from pydantic_ai.capabilities import NativeTool
+
+agent = Agent(
+    "anthropic:claude-sonnet-4-6",
+    capabilities=[NativeTool(WebSearchTool())],
+)
+
+result = agent.run_sync("Podaj jedno zdanie z największą wiadomością AI tego tygodnia.")
+print(result.output)
+```
+
+W przypadku OpenAI dostęp do wyszukiwania w sieci wymaga ich API Responses, więc model podajesz jako
+`openai-responses:gpt-5.2`. `CodeExecutionTool` dodajesz tak samo, owinięty w `NativeTool`.
+
+<Callout kind="key">
+Nie każdy dostawca obsługuje narzędzia natywne. Jeśli użyjesz `WebSearchTool` z dostawcą, który go nie
+wspiera, Pydantic AI zgłosi `UserError` przy uruchomieniu. Dla podejścia niezależnego od dostawcy,
+z lokalnym fallbackiem, istnieją capabilities takie jak `WebSearch` czy `WebFetch`.
+</Callout>
+
+## Gotowe narzędzia wyszukiwania
+
+Oprócz narzędzi natywnych Pydantic AI dostarcza gotowe narzędzia wyszukiwania, które wykonuje samo,
+po Twojej stronie. `duckduckgo_search_tool` nie wymaga klucza API i instalujesz go z grupą
+`pydantic-ai-slim[duckduckgo]`. `tavily_search_tool` korzysta z płatnego API Tavily i przyjmuje klucz.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
+
+agent = Agent(
+    "openai:gpt-5.2",
+    tools=[duckduckgo_search_tool()],
+    instructions="Wyszukaj w DuckDuckGo i zwróć wyniki.",
+)
+
+result = agent.run_sync("Wymień pięć najbardziej kasowych filmów animowanych 2025 roku.")
+print(result.output)
+```
+
+W odróżnieniu od `WebSearchTool` te narzędzia to zwykłe narzędzia funkcyjne. Trafiają do `tools`, a
+nie do `capabilities`, działają u każdego dostawcy i to Pydantic AI wykonuje samo zapytanie.
+`tavily_search_tool` pozwala dodatkowo ustalić na stałe część parametrów, na przykład `max_results`
+czy `include_domains`, ukrywając je przed modelem.
+
+## Co dalej
+
+Masz teraz pełen zestaw narzędziowy: dynamiczne definicje, sterowanie wyborem, bogate wyniki,
+ponawianie, limity czasu, równoległość i algebrę toolsetów, a do tego narzędzia natywne i gotowe
+wyszukiwarki. W kolejnym rozdziale złożymy te elementy w większą aplikację z wieloma agentami.
+Działający kod do tego rozdziału znajdziesz w `sandbox/17-zaawansowane-narzedzia`.

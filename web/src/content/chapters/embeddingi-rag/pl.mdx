@@ -1,0 +1,333 @@
+Embedding to wektor liczb, który opisuje znaczenie tekstu. Dwa zdania o podobnym sensie
+dają wektory leżące blisko siebie, a zdania o różnym sensie wektory odległe. Na tym jednym
+pomyśle opiera się wyszukiwanie semantyczne i RAG, czyli wzbogacanie odpowiedzi agenta o
+fragmenty Twoich własnych dokumentów.
+
+Pydantic AI daje jeden spójny interfejs do liczenia embeddingów u wielu dostawców. W tym
+rozdziale poznasz klasę `Embedder`, zbudujesz mały system RAG od zera i nauczysz się
+testować go offline, bez ani jednego wywołania API.
+
+## Po co w ogóle embeddingi
+
+Wyszukiwanie po słowach kluczowych szuka dosłownych dopasowań. Pytanie „jak zwrócić
+pieniądze" nie trafi w dokument zatytułowany „polityka reklamacji", choć mówią o tym samym.
+Embeddingi rozwiązują ten problem, bo porównują znaczenie, a nie litery.
+
+- <Term definition="Embedding to wektor liczb zmiennoprzecinkowych reprezentujący znaczenie tekstu. Teksty o podobnym sensie mają wektory blisko siebie.">embedding</Term> to wektor reprezentujący znaczenie tekstu,
+- <Term definition="RAG, czyli retrieval-augmented generation, to wzorzec, w którym najpierw wyszukujesz pasujące fragmenty dokumentów, a potem przekazujesz je modelowi jako kontekst.">RAG</Term> najpierw wyszukuje pasujące fragmenty, potem przekazuje je modelowi,
+- <Term definition="Podobieństwo kosinusowe mierzy kąt między dwoma wektorami. Wartość bliska 1 oznacza zbliżone znaczenie, bliska 0 brak związku.">podobieństwo kosinusowe</Term> mierzy, jak blisko siebie leżą dwa wektory.
+
+<Callout kind="key">
+Embeddingi liczy się raz i przechowuje. Przy zapytaniu liczysz embedding tylko dla pytania,
+a potem porównujesz go z gotowymi wektorami dokumentów. To dlatego RAG jest szybki: ciężka
+praca dzieje się wcześniej, podczas indeksowania.
+</Callout>
+
+## Klasa Embedder
+
+`Embedder` to wysokopoziomowy interfejs do liczenia embeddingów. Tworzysz go z
+identyfikatorem modelu w formacie `dostawca:nazwa`, dokładnie jak agenta. Ma dwie główne
+metody: `embed_query` dla pojedynczego pytania i `embed_documents` dla wsadu treści, którą
+indeksujesz.
+
+```python
+from pydantic_ai import Embedder
+
+embedder = Embedder("openai:text-embedding-3-small")
+
+
+async def main() -> None:
+    # Embedding pojedynczego zapytania
+    result = await embedder.embed_query("Czym jest uczenie maszynowe?")
+    print(f"Wymiary: {len(result.embeddings[0])}")
+    #> Wymiary: 1536
+
+    # Embedding wielu dokumentów naraz
+    docs = [
+        "Uczenie maszynowe to poddziedzina sztucznej inteligencji.",
+        "Uczenie głębokie korzysta z sieci neuronowych.",
+        "Python to język programowania.",
+    ]
+    result = await embedder.embed_documents(docs)
+    print(f"Zliczono {len(result.embeddings)} dokumentów")
+    #> Zliczono 3 dokumentów
+```
+
+<Callout kind="note">
+Niektóre modele inaczej optymalizują pytania i dokumenty. Dlatego istnieją dwie osobne
+metody. Używaj `embed_query` dla zapytań wyszukiwania i `embed_documents` dla treści, którą
+indeksujesz. Pydantic AI sam dobiera odpowiedni tryb dla danego modelu.
+</Callout>
+
+## EmbeddingResult i EmbeddingSettings
+
+Każda metoda zwraca obiekt `EmbeddingResult`. Trzyma on listę wektorów w polu `embeddings`,
+ale udostępnia też wygodne skróty. Do wektora dostaniesz się po indeksie albo po oryginalnym
+tekście wejściowym. W polu `usage` znajdziesz liczbę zużytych tokenów.
+
+```python
+from pydantic_ai import Embedder
+
+embedder = Embedder("openai:text-embedding-3-small")
+
+
+async def main() -> None:
+    result = await embedder.embed_query("Witaj świecie")
+
+    # Trzy równoważne sposoby dostępu do tego samego wektora
+    embedding = result.embeddings[0]      # po indeksie przez .embeddings
+    embedding = result[0]                  # albo wprost przez indeksowanie
+    embedding = result["Witaj świecie"]   # albo po oryginalnym tekście
+    print(f"Wymiary: {len(embedding)}")
+    #> Wymiary: 1536
+
+    print(f"Zużyte tokeny: {result.usage.input_tokens}")
+    #> Zużyte tokeny: 2
+```
+
+Zachowanie modelu dostroisz przez `EmbeddingSettings`. Najczęściej zmieniasz `dimensions`,
+czyli rozmiar wektora wyjściowego. Mniejszy wektor zajmuje mniej miejsca w indeksie i szybciej
+się porównuje, kosztem odrobiny dokładności. Ustawienia podasz na poziomie embeddera albo dla
+pojedynczego wywołania.
+
+```python
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings import EmbeddingSettings
+
+# Domyślne ustawienia dla wszystkich wywołań
+embedder = Embedder(
+    "openai:text-embedding-3-small",
+    settings=EmbeddingSettings(dimensions=512),
+)
+
+
+async def main() -> None:
+    # Nadpisanie tylko dla tego jednego wywołania
+    result = await embedder.embed_query(
+        "Witaj świecie",
+        settings=EmbeddingSettings(dimensions=256),
+    )
+    print(len(result.embeddings[0]))
+    #> 256
+```
+
+## Liczenie tokenów
+
+Modele embeddingów mają limit wejścia. Zanim wyślesz długi tekst, możesz policzyć tokeny i
+sprawdzić maksimum modelu. Metoda `count_tokens` zwraca liczbę tokenów, a `max_input_tokens`
+limit modelu albo `None`, gdy jest nieznany.
+
+```python
+from pydantic_ai import Embedder
+
+embedder = Embedder("openai:text-embedding-3-small")
+
+
+async def main() -> None:
+    text = "Witaj świecie, to jest test."
+
+    token_count = await embedder.count_tokens(text)
+    print(f"Tokeny: {token_count}")
+    #> Tokeny: 7
+
+    max_tokens = await embedder.max_input_tokens()
+    print(f"Maks. tokenów: {max_tokens}")
+    #> Maks. tokenów: 1024
+```
+
+## Mały RAG od zera
+
+Zbudujmy najprostszy możliwy RAG. Sercem jest podobieństwo kosinusowe: liczysz je między
+embeddingiem pytania a każdym embeddingiem dokumentu, a potem zwracasz kilka najbliższych
+fragmentów. Dla wektorów znormalizowanych to po prostu iloczyn skalarny.
+
+<Mermaid
+  caption="Dwie fazy RAG, indeksowanie i zapytanie"
+  chart={`flowchart TD
+    subgraph Indeks
+      D[Dokumenty] --> E1[embed_documents]
+      E1 --> V[Wektory w pamieci]
+    end
+    subgraph Zapytanie
+      Q[Pytanie] --> E2[embed_query]
+      E2 --> S[Podobienstwo kosinusowe]
+      V --> S
+      S --> R[Najblizsze fragmenty]
+    end`}
+/>
+
+Najpierw funkcja podobieństwa i prosty indeks, który trzyma dokumenty razem z ich wektorami.
+
+```python
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+from pydantic_ai import Embedder
+
+
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+@dataclass
+class IndexedDoc:
+    text: str
+    vector: list[float]
+
+
+async def build_index(embedder: Embedder, docs: list[str]) -> list[IndexedDoc]:
+    result = await embedder.embed_documents(docs)
+    return [
+        IndexedDoc(text=text, vector=list(result[text]))
+        for text in docs
+    ]
+```
+
+Teraz funkcja wyszukiwania. Liczy embedding pytania, porównuje go z każdym dokumentem i
+zwraca `top_k` najbliższych tekstów.
+
+```python
+async def retrieve(
+    embedder: Embedder,
+    index: list[IndexedDoc],
+    query: str,
+    top_k: int = 2,
+) -> list[str]:
+    result = await embedder.embed_query(query)
+    query_vector = list(result.embeddings[0])
+
+    scored = [
+        (cosine_similarity(query_vector, doc.vector), doc.text)
+        for doc in index
+    ]
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [text for _, text in scored[:top_k]]
+```
+
+Przebieg jednego zapytania wygląda tak. Pytanie zamienia się w wektor, ten porównujemy z
+indeksem, a najlepsze fragmenty trafiają do modelu jako kontekst.
+
+<RunFlow
+  title="Przebieg pojedynczego zapytania RAG"
+  nodes={[
+    { kind: "user", label: "Pytanie", detail: "tekst od użytkownika" },
+    { kind: "tool", label: "embed_query", detail: "pytanie na wektor" },
+    { kind: "tool", label: "retrieve", detail: "kosinus po indeksie" },
+    { kind: "model", label: "Model", detail: "odpowiada z kontekstem" },
+    { kind: "output", label: "Wynik", detail: "result.output" },
+  ]}
+/>
+
+## Podłączenie wyszukiwania do agenta
+
+W praktyce wyszukiwanie wystawiasz jako narzędzie agenta. Indeks przekazujesz przez
+zależności, a agent sam decyduje, kiedy sięgnąć po fragmenty. Dzięki temu model odpowiada na
+podstawie Twoich dokumentów, a nie tylko własnej wiedzy.
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai import Embedder
+
+
+@dataclass
+class RagDeps:
+    embedder: Embedder
+    index: list[IndexedDoc]
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    deps_type=RagDeps,
+    instructions="Odpowiadaj wyłącznie na podstawie pobranych fragmentów.",
+)
+
+
+@agent.tool
+async def search_docs(ctx: RunContext[RagDeps], query: str) -> list[str]:
+    """Zwraca fragmenty dokumentów najbliższe zapytaniu."""
+    return await retrieve(ctx.deps.embedder, ctx.deps.index, query)
+```
+
+## Reranking, czyli wyszukiwanie dwuetapowe
+
+Embeddingi szybko wyłaniają szeroką listę kandydatów, ale nie zawsze trafnie układają
+kolejność. Wzorzec dwuetapowy poprawia jakość: najpierw embeddingami pobierasz na przykład
+sto kandydatów, a potem <Term definition="Cross-encoder czyta pytanie i dokument razem, w jednym przejściu, i ocenia ich dopasowanie. Jest wolniejszy od embeddingów, ale dokładniejszy.">cross-encoder</Term> ocenia każdego z nich wobec pytania i zostawia tylko kilka
+najlepszych. Pydantic AI nie dostarcza własnej klasy rerankera, więc używasz własnego.
+
+```python
+import asyncio
+from functools import cache
+
+from sentence_transformers import CrossEncoder
+
+
+@cache
+def get_reranker() -> CrossEncoder:
+    # Ładowany leniwie przy pierwszym wywołaniu, potem reużywany.
+    return CrossEncoder("cross-encoder/ms-marco-MiniLM-L6-v2")
+
+
+async def rerank(query: str, candidates: list[str], top_k: int = 3) -> list[str]:
+    """Sortuje kandydatów według trafności względem pytania."""
+    reranker = get_reranker()
+    # CrossEncoder.rank blokuje, więc uruchamiamy go poza pętlą zdarzeń.
+    ranked = await asyncio.to_thread(
+        reranker.rank, query, candidates, top_k=top_k, return_documents=True
+    )
+    return [item["text"] for item in ranked]
+```
+
+<Callout kind="tip">
+Reranking dokładaj dopiero wtedy, gdy zwykłe wyszukiwanie kosinusowe zwraca trafne, ale źle
+uporządkowane wyniki. Cross-encoder jest wolniejszy, bo czyta pytanie i dokument razem, więc
+ma sens głównie na krótkiej liście kandydatów, nie na całym indeksie.
+</Callout>
+
+## Testowanie offline
+
+Liczenie embeddingów w testach byłoby wolne i kosztowne. `TestEmbeddingModel` zwraca
+deterministyczne wektory bez wywołań API. Podmieniasz go przez `embedder.override`, więc kod
+produkcyjny zostaje nietknięty, a test działa szybko i powtarzalnie.
+
+```python
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings import TestEmbeddingModel
+
+
+async def test_my_rag_system() -> None:
+    embedder = Embedder("openai:text-embedding-3-small")
+    test_model = TestEmbeddingModel()
+
+    with embedder.override(model=test_model):
+        result = await embedder.embed_query("zapytanie testowe")
+
+        # TestEmbeddingModel zwraca deterministyczne wektory
+        assert result.embeddings[0] == [1.0] * 8
+
+        # Możesz sprawdzić, jakie ustawienia zostały użyte
+        assert test_model.last_settings is not None
+```
+
+<Callout kind="warning">
+Zmiana modelu embeddingów zmienia wymiar wektora i rozkład podobieństw. Po takiej zmianie
+musisz policzyć embeddingi dokumentów od nowa i przebudować indeks. Wybieraj model, przy
+którym zamierzasz zostać, albo taki, który pozwala sterować wymiarem.
+</Callout>
+
+## Co dalej
+
+Masz już komplet: liczysz embeddingi przez `Embedder`, budujesz indeks, wyszukujesz po
+podobieństwie kosinusowym, opcjonalnie dokładasz reranking, a całość testujesz offline przez
+`TestEmbeddingModel`. W następnym rozdziale połączymy te elementy w pełnego agenta RAG
+opartego na Twoich dokumentach. Działający kod do tego rozdziału znajdziesz w
+`sandbox/19-embeddingi-rag`.

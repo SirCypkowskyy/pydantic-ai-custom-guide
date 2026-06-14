@@ -158,6 +158,242 @@ see the subprocess logs, and the whole thing works without a network. Reach for 
 servers when the tool is meant to live separately from your application.
 </Callout>
 
+## Building your own MCP server around an agent
+
+So far you have been the client. Now we flip the roles: your code is the MCP server, and
+inside the tool sits a full Pydantic AI agent. This is how you expose a capability you built
+yourself as an ordinary MCP tool that any client can use.
+
+The simplest way is `FastMCP` from the official MCP SDK. You create a server, decorate a
+function with `@server.tool()`, and inside its body you call the agent and return its output.
+
+```python
+from mcp.server.fastmcp import FastMCP
+
+from pydantic_ai import Agent
+
+server = FastMCP("Pydantic AI Server")
+server_agent = Agent(
+    "anthropic:claude-haiku-4-5", instructions="always reply in rhyme"
+)
+
+
+@server.tool()
+async def poet(theme: str) -> str:
+    """Poem generator"""
+    r = await server_agent.run(f"write a poem about {theme}")
+    return r.output
+
+
+if __name__ == "__main__":
+    server.run()
+```
+
+From the client's point of view this is just a `poet` tool. The client does not know that an
+agent, a model, and instructions sit underneath. What matters to it is the tool name, its
+arguments, and the returned text.
+
+<Callout kind="key">
+Server and client are two roles of the same protocol. In the earlier sections the agent was a
+client and reached for someone else's tools. Here the agent is the heart of the server, and
+its own capability becomes a tool for others. You can run this same file as a stdio server and
+connect to it with the client from the first section of the chapter.
+</Callout>
+
+## Sampling, where the server borrows the client's model
+
+In the example above the server had its own model and its own keys. Often you do not want
+that: a public server would rather have the client pay for model calls, and a local server
+would rather not hold any credentials. That is what sampling is for. Instead of connecting to
+a model directly, the server asks the client over the MCP protocol to run a model call and
+receives the finished response.
+
+On the server side you use `MCPSamplingModel` as the agent's model and hand it the session
+from the tool context.
+
+```python
+from mcp.server.fastmcp import Context, FastMCP
+
+from pydantic_ai import Agent
+from pydantic_ai.models.mcp_sampling import MCPSamplingModel
+
+server = FastMCP("Pydantic AI Server with sampling")
+server_agent = Agent(instructions="always reply in rhyme")
+
+
+@server.tool()
+async def poet(ctx: Context, theme: str) -> str:
+    """Poem generator"""
+    r = await server_agent.run(
+        f"write a poem about {theme}",
+        model=MCPSamplingModel(session=ctx.session),
+    )
+    return r.output
+
+
+if __name__ == "__main__":
+    server.run()
+```
+
+On the client side sampling is supported automatically when the client is a Pydantic AI
+agent. All the server needs is a `sampling_model`. The easiest way to set it is the
+`agent.set_mcp_sampling_model()` call, which sets the agent's model as the sampling model on
+every connected MCP server.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+
+server = MCPServerStdio("python", args=["generate_svg.py"])
+agent = Agent("openai:gpt-5.2", toolsets=[server])
+
+
+async def main() -> None:
+    async with agent:
+        agent.set_mcp_sampling_model()
+        result = await agent.run("Create an image of a robot in a punk style.")
+        print(result.output)
+```
+
+<RunFlow
+  title="Sampling: the server calls back to the client's model"
+  nodes={[
+    { kind: "user", label: "Prompt", detail: "text from the user" },
+    { kind: "agent", label: "Agent (client)", detail: "calls the MCP tool" },
+    { kind: "tool", label: "MCP server", detail: "needs a model" },
+    { kind: "model", label: "Client model", detail: "sampling via the client" },
+    { kind: "output", label: "Output", detail: "result.output" },
+  ]}
+/>
+
+You can also turn sampling off by setting `allow_sampling=False` when you create the server
+reference. The client will then refuse model calls to the server even if it asks for them.
+
+## The FastMCP client
+
+`FastMCP` is a higher-level MCP framework that adds things beyond the specification itself,
+like tool transformation and OAuth. Pydantic AI ships a separate toolset, `FastMCPToolset`,
+that connects to servers through the FastMCP client. It is an alternative to the `MCPServer*`
+classes from the earlier sections.
+
+If your FastMCP server lives in the same codebase as the agent, you can build the toolset
+straight from the server object and save a network round trip.
+
+```python
+from fastmcp import FastMCP
+
+from pydantic_ai import Agent
+from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+fastmcp_server = FastMCP("my_server")
+
+
+@fastmcp_server.tool()
+async def add(a: int, b: int) -> int:
+    return a + b
+
+
+toolset = FastMCPToolset(fastmcp_server)
+agent = Agent("openai:gpt-5.2", toolsets=[toolset])
+
+
+async def main() -> None:
+    result = await agent.run("What is 7 plus 5?")
+    print(result.output)
+    #> The answer is 12.
+```
+
+`FastMCPToolset` also accepts a plain server address, for example `FastMCPToolset("http://localhost:8000/mcp")`,
+a path to a script, or a JSON configuration.
+
+<Callout kind="warning">
+`FastMCPToolset` does not yet support sampling or elicitation. If you need those mechanisms,
+stay with the standard `MCPServerStdio`, `MCPServerStreamableHTTP`, or `MCPServerSSE` classes.
+</Callout>
+
+## Many servers from a config file, and elicitation
+
+Instead of creating every server by hand in code, you can describe them in a JSON file and
+load them with `load_mcp_servers()`. It is handy when you have several servers, or when you
+want to steer them without touching code.
+
+```json
+{
+  "mcpServers": {
+    "python-runner": {
+      "command": "uv",
+      "args": ["run", "mcp-run-python", "stdio"]
+    },
+    "weather": {
+      "command": "python",
+      "args": ["mcp_server.py"]
+    },
+    "weather-api": {
+      "url": "http://localhost:3001/sse"
+    },
+    "calculator": {
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+Entries with a `command` field are stdio servers. Entries with a `url` field are HTTP
+servers, where an address ending in `/sse` is treated as the older `MCPServerSSE` transport
+and anything else as Streamable HTTP. The configuration also supports environment variable
+expansion through `${VAR}` and `${VAR:-default}`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.mcp import load_mcp_servers
+
+servers = load_mcp_servers("mcp_config.json")
+agent = Agent("openai:gpt-5.2", toolsets=servers)
+
+
+async def main() -> None:
+    async with agent:
+        result = await agent.run("What is 7 plus 5?")
+        print(result.output)
+```
+
+Finally, elicitation. This is the mechanism where the server asks the client for missing data
+while a tool is running, instead of demanding everything upfront. In practice the model says
+"hold on, I need to know X first". On the client side you attach an `elicitation_callback`, a
+function that receives the server's request, asks the user, and sends the result back.
+
+```python
+from typing import Any
+
+from mcp.client.session import ClientSession
+from mcp.shared.context import RequestContext
+from mcp.types import ElicitRequestParams, ElicitResult
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+
+
+async def handle_elicitation(
+    context: RequestContext[ClientSession, Any, Any],
+    params: ElicitRequestParams,
+) -> ElicitResult:
+    print(f"\n{params.message}")
+    response = input("Response: ")
+    return ElicitResult(action="accept", content={"response": response})
+
+
+server = MCPServerStdio(
+    "python", args=["restaurant_server.py"], elicitation_callback=handle_elicitation
+)
+agent = Agent("openai:gpt-5.2", toolsets=[server])
+```
+
+<Callout kind="note">
+Elicitation works only for flat objects with string, number, boolean, or enum fields. The
+callback can return `action="accept"` with the data, `action="decline"` when the user says
+no, or `action="cancel"` when the user aborts. Never ask the user for sensitive data this way.
+</Callout>
+
 ## What is next
 
 You now know how to connect an agent to an MCP server over stdio and over HTTP, why the

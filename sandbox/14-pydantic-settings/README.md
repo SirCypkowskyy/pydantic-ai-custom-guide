@@ -1,15 +1,15 @@
 # 14 - pydantic-settings
 
-Towarzyszy rozdziałowi [pydantic-settings](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/pydantic-settings).
+Accompanies the [pydantic-settings](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/pydantic-settings) chapter.
 
-Pokazuje, jak sterować agentem z typowanej, walidowanej konfiguracji zamiast rozproszonych
-wywołań `os.getenv`. Klasa `AppSettings` dziedziczy po `BaseSettings`, czyta zmienne
-środowiskowe z prefiksem `CH14_` oraz plik `.env`, a zagnieżdżony blok `tuning` jest
-odczytywany przez delimiter `__`.
+Shows how to drive an agent from typed, validated configuration instead of scattered
+`os.getenv` calls. The `AppSettings` class inherits from `BaseSettings`, reads environment
+variables with the `CH14_` prefix and the `.env` file, and the nested `tuning` block is
+read through the `__` delimiter.
 
-## Konfiguracja
+## Configuration
 
-Zmienne środowiskowe (wszystkie opcjonalne, mają wartości domyślne):
+Environment variables (all optional, with default values):
 
 ```bash
 CH14_LANGUAGE=en
@@ -17,15 +17,15 @@ CH14_TUNING__TEMPERATURE=0.7
 CH14_TUNING__MAX_SENTENCES=3
 ```
 
-## Uruchomienie
+## Running
 
 ```bash
-# z katalogu sandbox/
+# from the sandbox/ directory
 uv run 14-pydantic-settings/main.py
 
-# smoke test (działa offline, używa TestModel)
+# smoke test (works offline, uses TestModel)
 uv run pytest 14-pydantic-settings/smoke_test.py
 ```
 
-`main.py` wymaga `OLLAMA_CLOUD_API_KEY` w pliku `.env` w katalogu głównym repozytorium.
-Smoke test działa bez sieci i bez klucza.
+`main.py` requires `OLLAMA_CLOUD_API_KEY` in the `.env` file in the repository root.
+The smoke test works without the network and without a key.

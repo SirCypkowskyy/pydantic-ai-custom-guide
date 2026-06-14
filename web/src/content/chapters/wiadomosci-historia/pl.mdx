@@ -143,6 +143,229 @@ się wejściem następnej.
     R2 --> O[result.output]`}
 />
 
+## Korelacja uruchomień przez conversation_id
+
+Każdy `ModelRequest` i `ModelResponse` niesie dwa identyfikatory. `run_id` jest unikalny dla
+jednego uruchomienia agenta. `conversation_id` jest wspólny dla wszystkich uruchomień, które
+budują na tej samej historii. Świeży `conversation_id` powstaje przy pierwszym uruchomieniu,
+zostaje odciśnięty na każdej wiadomości z tego uruchomienia i jest dziedziczony przez kolejne
+uruchomienia, którym podasz te wiadomości przez `message_history`.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent("openai:gpt-5.2")
+
+result1 = agent.run_sync("Opowiedz mi dowcip.")
+result2 = agent.run_sync("Wytłumacz?", message_history=result1.all_messages())
+
+# Oba uruchomienia należą do tej samej rozmowy.
+assert result1.conversation_id == result2.conversation_id
+
+# Rozgałęzienie wątku: ignorujemy istniejący conversation_id i zaczynamy nowy.
+rozgalezienie = agent.run_sync(
+    "Inny dowcip poproszę.",
+    message_history=result1.all_messages(),
+    conversation_id="new",
+)
+assert rozgalezienie.conversation_id != result1.conversation_id
+```
+
+Możesz też podać własny `conversation_id="<twoje-id>"`, na przykład identyfikator wątku czatu z
+Twojej bazy danych. Wartość `conversation_id="new"` zaczyna świeżą rozmowę i pomija ten, który
+siedzi już w `message_history`. To wygodne, gdy chcesz odbić się od istniejącego wątku bez
+zmuszania kodu wywołującego do generowania własnego identyfikatora.
+
+<Callout kind="note">
+Po stronie obserwowalności `run_id` ląduje na spanie OpenTelemetry jako `gen_ai.agent.call.id`,
+a `conversation_id` jako `gen_ai.conversation.id`. Dzięki temu w Logfire albo dowolnym backendzie
+OpenTelemetry skleisz ślady całej rozmowy wieloturowej bez prowadzenia własnej ewidencji. Wystarczy,
+że historia robi pełny obieg tam i z powrotem, a identyfikator rozmowy jedzie razem z nią.
+</Callout>
+
+## Przetwarzanie historii przed wysłaniem
+
+Czasem chcesz zmienić historię, zanim trafi do modelu: odfiltrować dane wrażliwe, przyciąć
+listę dla oszczędności tokenów albo dać modelowi mniej kontekstu. Służy do tego zdolność
+`ProcessHistory`, którą podajesz przez `capabilities`. Owija ona funkcję, która bierze listę
+`ModelMessage` i zwraca zmodyfikowaną listę tego samego typu. Procesor może być synchroniczny
+albo asynchroniczny, a jeśli podasz kilka, wykonają się po kolei.
+
+```python
+from pydantic_ai import Agent, ModelMessage, ModelRequest
+from pydantic_ai.capabilities import ProcessHistory
+
+
+def filtruj_odpowiedzi(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Zostaw tylko ModelRequest, odrzuć wszystkie ModelResponse."""
+    return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+
+def tylko_ostatnie(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Przytnij historię do pięciu ostatnich wiadomości."""
+    return messages[-5:] if len(messages) > 5 else messages
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    capabilities=[ProcessHistory(filtruj_odpowiedzi), ProcessHistory(tylko_ostatnie)],
+)
+```
+
+Procesor potrafi też przyjąć `RunContext` jako pierwszy parametr, gdy decyzja ma zależeć od
+stanu uruchomienia, na przykład od dotychczasowego zużycia tokenów. Wtedy filtrujesz historię
+dopiero wtedy, gdy naprawdę robi się długa.
+
+```python
+from pydantic_ai import Agent, ModelMessage, RunContext
+from pydantic_ai.capabilities import ProcessHistory
+
+
+def procesor_zalezny_od_kontekstu(
+    ctx: RunContext[None],
+    messages: list[ModelMessage],
+) -> list[ModelMessage]:
+    if ctx.usage.total_tokens > 1000:
+        return messages[-3:]  # Przy dużym zużyciu zostaw tylko świeże wiadomości.
+    return messages
+
+
+agent = Agent("openai:gpt-5.2", capabilities=[ProcessHistory(procesor_zalezny_od_kontekstu)])
+```
+
+Najbardziej oszczędny wariant to streszczanie. Zamiast wyrzucać stare tury, oddajesz je tańszemu
+agentowi, który zwija je w krótkie podsumowanie i wkleja z powrotem na początek historii.
+
+```python
+from pydantic_ai import Agent, ModelMessage
+from pydantic_ai.capabilities import ProcessHistory
+
+# Tańszy model do streszczania starych wiadomości.
+agent_streszczajacy = Agent(
+    "openai:gpt-5-mini",
+    instructions="Streść tę rozmowę, pomijając small talk. Skup się na technicznych ustaleniach.",
+)
+
+
+async def stresc_stare_wiadomosci(messages: list[ModelMessage]) -> list[ModelMessage]:
+    if len(messages) > 10:
+        najstarsze = messages[:10]
+        streszczenie = await agent_streszczajacy.run(message_history=najstarsze)
+        # Streszczenie plus ostatnia wiadomość, która zostaje nietknięta.
+        return streszczenie.new_messages() + messages[-1:]
+    return messages
+
+
+agent = Agent("openai:gpt-5.2", capabilities=[ProcessHistory(stresc_stare_wiadomosci)])
+```
+
+<Callout kind="warning">
+Przy cięciu albo streszczaniu historii pilnuj, żeby wywołania narzędzi i ich wyniki zostały w
+parach. Jeśli `ToolCallPart` zostanie bez pasującego `ToolReturnPart`, model potrafi zwrócić błąd.
+Procesory podmieniają historię w stanie uruchomienia, więc jeśli zależy Ci na oryginale, zrób
+najpierw jego kopię.
+</Callout>
+
+## Wstrzykiwanie wiadomości w trakcie uruchomienia
+
+Narzędzia i kod sterujący uruchomieniem mogą dorzucić treść do rozmowy w jej trakcie. Z poziomu
+narzędzia, gdzie masz `RunContext`, używasz `ctx.enqueue(...)`. Z zewnętrznego kodu, który
+prowadzi uruchomienie przez `agent.iter()`, używasz `agent_run.enqueue(...)`. Parametr `priority`
+decyduje, kiedy treść zostanie dostarczona. `'asap'` (domyślne) dorzuca ją do najbliższego
+`ModelRequest`, a jeśli agent miałby się skończyć wcześniej, zawraca uruchomienie do jeszcze
+jednego zapytania. `'when_idle'` czeka, aż agent skończy bieżącą pracę, i dopiero wtedy podaje
+treść jako kolejne zadanie.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import SystemPromptPart
+
+agent = Agent("anthropic:claude-opus-4-7")
+
+
+@agent.tool
+def podnies_alarm(ctx: RunContext[None]) -> str:
+    ctx.enqueue("Alarm: produkcja działa wadliwie, zajmij się triage'em w pierwszej kolejności.")
+    return "alarm podniesiony"
+
+
+@agent.tool
+def tryb_incydentu(ctx: RunContext[None]) -> str:
+    # SystemPromptPart pozwala podkręcić instrukcje agenta w locie.
+    ctx.enqueue(SystemPromptPart(content="Jesteś teraz w trybie incydentu: zwięźle i konkretnie."))
+    return "tryb incydentu włączony"
+```
+
+Gdy sterujesz uruchomieniem z zewnątrz, na przykład przekazując zdarzenia z webhooka albo kolejki
+zadań, dokładasz pracę przez `AgentRun.enqueue`. Treść z `'when_idle'` zostaje pobrana dopiero
+wtedy, gdy agent dobiłby do końca, więc uruchomienie trzeba prowadzić przez `agent.run` albo
+ręcznie przez `AgentRun.next()`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_graph import End
+
+agent = Agent("anthropic:claude-opus-4-7")
+
+
+async def main():
+    async with agent.iter("Streść najnowszy raport z wdrożenia") as agent_run:
+        # Zewnętrzny system dorzuca zadanie w trakcie pracy agenta.
+        agent_run.enqueue(
+            "Właśnie zgłoszono nowy błąd, uwzględnij go w streszczeniu.",
+            priority="when_idle",
+        )
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            node = await agent_run.next(node)
+```
+
+<Callout kind="warning">
+Dojście do końca zwykłej pętli `async for node in agent_run:` z niepobranymi wiadomościami
+`'when_idle'` podnosi `UndrainedPendingMessagesError`, bo inaczej te wiadomości zniknęłyby po
+cichu. Każde zawrócenie na koniec uruchomienia otwiera nowe zapytanie do modelu, więc narzędzie,
+które kolejkuje przy każdym kroku, zapętli uruchomienie. Ustaw `UsageLimits` jako bezpiecznik.
+</Callout>
+
+<RunFlow
+  title="enqueue z priorytetem 'when_idle' zawraca uruchomienie"
+  nodes={[
+    { kind: "user", label: "Start", detail: "agent.iter(...)" },
+    { kind: "tool", label: "Praca agenta", detail: "streszcza raport" },
+    { kind: "user", label: "enqueue", detail: "when_idle: nowy błąd" },
+    { kind: "output", label: "Zawrót", detail: "kolejne zapytanie z błędem" },
+  ]}
+/>
+
+## Historia prosto do bajtów JSON
+
+`all_messages()` i `new_messages()` mają warianty zwracające gotowe bajty JSON:
+`all_messages_json()` oraz `new_messages_json()`. Przydają się, gdy chcesz odłożyć historię do
+kolumny `bytes` w bazie albo odesłać ją do frontendu, bez ręcznego przepuszczania przez
+`to_jsonable_python` i `json.dumps`.
+
+```python
+from pydantic_ai import Agent, ModelMessagesTypeAdapter
+
+agent = Agent("openai:gpt-5.2", instructions="Bądź pomocnym asystentem.")
+
+result1 = agent.run_sync("Opowiedz mi dowcip.")
+
+# Surowe bajty JSON, gotowe do zapisu w kolumnie bytes albo odesłania siecią.
+jako_json = result1.all_messages_json()
+
+# Walidacja z powrotem działa wprost na bajtach, bez pośredniego json.loads.
+odczytana = ModelMessagesTypeAdapter.validate_json(jako_json)
+
+result2 = agent.run_sync("Inny dowcip poproszę.", message_history=odczytana)
+print(result2.output)
+#> Czemu programiści wolą ciemny motyw? Bo światło przyciąga bugi.
+```
+
+Różnica wobec `to_jsonable_python` z poprzedniej sekcji jest prosta. Tamta funkcja daje obiekty
+Pythona, które jeszcze sam serializujesz. Warianty `_json` od razu zwracają bajty, a po stronie
+odczytu `ModelMessagesTypeAdapter.validate_json` odtwarza z nich pełne obiekty wiadomości.
+
 ## Co dalej
 
 Umiesz już czytać strukturę wiadomości, prowadzić rozmowę wieloturową i utrwalać historię w

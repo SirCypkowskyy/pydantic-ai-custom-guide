@@ -230,6 +230,248 @@ You run the fast, deterministic tests on every commit. You run evals, especially
 with `LLMJudge`, less often, because they are slow and they cost money. That split keeps the
 day-to-day work cheap while still keeping the model's quality under control.
 
+## The wider shelf of built-in evaluators
+
+`IsInstance` and `LLMJudge` are only the start. `pydantic-evals` ships a whole set of ready
+made case-level evaluators that run for free and instantly, with no network. `EqualsExpected`
+checks exact equality with `expected_output`. `Equals(value=...)` compares against a specific
+value. `Contains(value=...)` checks for a substring, a list element, or a key-value pair in a
+dict. `MaxDuration(seconds=...)` makes sure a case stays inside a time budget. You combine
+them so the cheap deterministic checks run first and the expensive `LLMJudge` runs last.
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import (
+    Contains,
+    IsInstance,
+    LLMJudge,
+    MaxDuration,
+)
+
+dataset = Dataset(
+    name="combined_evaluators",
+    cases=[Case(name="refund", inputs="I want my money back")],
+    evaluators=[
+        # Fast, deterministic checks first.
+        IsInstance(type_name="str"),
+        Contains(value="30 days", case_sensitive=False),
+        MaxDuration(seconds=2.0),
+        # The expensive LLM judge only at the end.
+        LLMJudge(rubric="Response is helpful and mentions the refund policy."),
+    ],
+)
+```
+
+<Callout kind="tip">
+Order matters in practice. Cheap checks like `IsInstance` or `Contains` catch a broken shape
+or a missing keyword right away, so you do not waste money on `LLMJudge` for cases that are
+obviously wrong anyway.
+</Callout>
+
+## Report evaluators for the whole experiment
+
+Regular evaluators run once per case. Report evaluators work differently: they run once after
+every case has been evaluated, and they receive the full
+<Term definition="An EvaluationReport is the complete result of an experiment: every case with its inputs, outputs, expected outputs, numeric scores, and assertions. A report evaluator computes statistics over the whole set.">EvaluationReport</Term>.
+That lets you compute experiment-wide statistics: a confusion matrix, a precision-recall
+curve with area under the curve, or plain accuracy. You pass them through the
+`report_evaluators` parameter on `Dataset`.
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import ConfusionMatrixEvaluator
+
+
+def classifier(text: str) -> str:
+    text = text.lower()
+    if "cat" in text or "meow" in text:
+        return "cat"
+    if "dog" in text or "bark" in text:
+        return "dog"
+    return "unknown"
+
+
+dataset = Dataset(
+    name="animal_classifier",
+    cases=[
+        Case(name="cat", inputs="The cat goes meow", expected_output="cat"),
+        Case(name="dog", inputs="The dog barks", expected_output="dog"),
+    ],
+    report_evaluators=[
+        ConfusionMatrixEvaluator(
+            predicted_from="output",
+            expected_from="expected_output",
+            title="Animal Classification",
+        ),
+    ],
+)
+
+report = dataset.evaluate_sync(classifier)
+# report.analyses contains a ConfusionMatrix result.
+```
+
+The built-in report evaluators are `ConfusionMatrixEvaluator` (confusion matrix),
+`PrecisionRecallEvaluator` (precision-recall curve with AUC), `ROCAUCEvaluator`, and
+`KolmogorovSmirnovEvaluator`. You can also write your own by inheriting from
+`ReportEvaluator` and returning a `ScalarResult` or a `TableResult`. When Logfire is
+configured, the analyses attach to the experiment span and render in the UI as heatmaps and
+charts.
+
+## Span-based evaluators over OTel spans
+
+Sometimes a correct output is not enough. The agent may have reached the right answer by
+accident, without calling the tool it was supposed to call, or after five rounds too many.
+Span-based evaluation checks **how** the agent reached the result, not just **what** it
+returned. It requires `logfire` to be installed and configured, because it works on the
+OpenTelemetry spans captured during the run.
+
+```python
+import logfire
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import HasMatchingSpan
+
+logfire.configure(send_to_logfire="if-token-present")
+
+dataset = Dataset(
+    name="behavior_check",
+    cases=[Case(inputs="Find order 12345")],
+    evaluators=[
+        # The search tool must be called.
+        HasMatchingSpan(
+            query={"name_contains": "search_tool"},
+            evaluation_name="used_search",
+        ),
+        # The database query must stay under 100 ms.
+        HasMatchingSpan(
+            query={"and_": [
+                {"name_contains": "database"},
+                {"max_duration": 0.1},
+            ]},
+            evaluation_name="fast_database",
+        ),
+        # The dangerous tool must not be called.
+        HasMatchingSpan(
+            query={"not_": {"name_contains": "delete_database"}},
+            evaluation_name="safe_execution",
+        ),
+    ],
+)
+```
+
+`HasMatchingSpan` takes a `SpanQuery`, a dictionary of conditions. You match by name
+(`name_contains`, `name_equals`, `name_matches_regex`), by attributes (`has_attributes`), by
+timing (`min_duration`, `max_duration`), and even by parent-child relationships
+(`some_child_has`, `min_descendant_count`). You combine conditions with `and_`, `or_`, and
+`not_`. For more complex analysis you write your own evaluator and reach for `ctx.span_tree`,
+which lets you walk the whole span tree and compute, for example, the total time spent in
+model calls.
+
+<RunFlow
+  title="Span-based evaluation"
+  nodes={[
+    { kind: "agent", label: "Agent", detail: "run with logfire" },
+    { kind: "tool", label: "OTel spans", detail: "tools and timings" },
+    { kind: "model", label: "HasMatchingSpan", detail: "SpanQuery" },
+    { kind: "output", label: "Assertion", detail: "what and how it happened" },
+  ]}
+/>
+
+<Callout kind="key">
+Span-based evaluation tests a behavioral contract, not just an input-output relationship. It
+catches regressions where the output is still correct but the internal logic broke, for
+example an agent that stopped using search and now answers from memory.
+</Callout>
+
+## Dataset management and serialization
+
+A dataset does not have to live only in code. `pydantic-evals` serializes a `Dataset` to YAML
+or JSON and loads it back, so your golden dataset sits in the repository like any other file.
+Saving also writes a JSON schema file, which gives you field autocomplete and live validation
+in the editor. The full round-trip preserves cases, evaluators, and report evaluators too.
+
+```python
+from typing import Any
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import EqualsExpected, IsInstance
+
+dataset = Dataset[str, str, Any](
+    name="golden_suite",
+    cases=[
+        Case(name="france", inputs="Capital of France?", expected_output="Paris"),
+    ],
+    evaluators=[IsInstance(type_name="str"), EqualsExpected()],
+)
+
+# Save to YAML, golden_suite_schema.json is written alongside.
+dataset.to_file("golden_suite.yaml")
+
+# Load it back, the format is inferred from the extension.
+loaded = Dataset[str, str, Any].from_file("golden_suite.yaml")
+
+# Add cases on the fly.
+loaded.add_case(name="poland", inputs="Capital of Poland?", expected_output="Warsaw")
+```
+
+Built-in evaluators are recognized by name automatically. If you use a custom evaluator, you
+pass its type through `custom_evaluator_types=[...]` when loading, so `pydantic-evals` knows
+how to reconstruct it. You can also generate a whole dataset with a model through
+`generate_dataset`, providing the input and output schemas as Pydantic models.
+
+<Callout kind="tip">
+Keep separate datasets for separate purposes: a fast smoke test of critical paths, a thorough
+suite for detailed scoring, and a narrow regression suite for specific past bugs. Each one is
+a plain YAML file that is easy to review in a pull request.
+</Callout>
+
+## Multi-run evaluation and online scoring
+
+A real model never returns the same answer twice, so a single pass over a dataset says little
+about stability. By running the same dataset many times you see the spread of scores and tell
+apart the cases the model solves confidently from the ones it gets right only sometimes. The
+same idea extends to production: because span-based evaluation operates on the same telemetry
+data you already collect in production, you can run the same assertions over live traffic,
+scoring the model online and not just against a frozen dataset.
+
+```python
+import statistics
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import LLMJudge
+
+dataset = Dataset(
+    name="stability_scoring",
+    cases=[Case(name="refund", inputs="I want my money back")],
+    evaluators=[LLMJudge(rubric="Response is empathetic and mentions the refund policy.")],
+)
+
+
+async def respond(query: str) -> str:
+    return "I understand. Under our policy you have 30 days to return it."
+
+
+# A handful of runs reveals the variance one pass cannot show.
+scores: list[float] = []
+for _ in range(5):
+    report = dataset.evaluate_sync(respond)
+    passed = sum(
+        1
+        for case in report.cases
+        for assertion in case.assertions.values()
+        if assertion.value
+    )
+    scores.append(passed / max(len(report.cases), 1))
+
+print(f"mean={statistics.mean(scores):.2f} stdev={statistics.pstdev(scores):.2f}")
+```
+
+High variance is a signal that the answer is unstable and worth tightening the instructions
+or adding edge cases. In production you do not have an `expected_output` for every request,
+so you lean on evaluators that need no reference: `LLMJudge` with a rubric, phrase-presence
+checks, or span assertions. That closes the loop: the same criteria that guard quality on
+every commit guard it on live traffic too.
+
 ## What is next
 
 You can now test an agent without spending a cent and measure the quality of its answers. In

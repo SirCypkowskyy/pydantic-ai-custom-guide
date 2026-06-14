@@ -231,6 +231,248 @@ Szybkie, deterministyczne testy uruchamiasz na każdy commit. Ewaluacje, zwłasz
 `LLMJudge`, odpalasz rzadziej, bo są wolne i kosztują. Taki podział sprawia, że codzienna
 praca zostaje tania, a jakość modelu i tak masz pod kontrolą.
 
+## Szersza półka wbudowanych ewaluatorów
+
+`IsInstance` i `LLMJudge` to dopiero początek. `pydantic-evals` daje całą garść gotowych
+ewaluatorów na poziomie pojedynczego przypadku, które działają za darmo i natychmiast, bez
+sieci. `EqualsExpected` sprawdza dokładną równość z `expected_output`. `Equals(value=...)`
+porównuje z konkretną wartością. `Contains(value=...)` sprawdza zawieranie podłańcucha,
+elementu listy albo pary klucz-wartość w słowniku. `MaxDuration(seconds=...)` pilnuje, żeby
+przypadek zmieścił się w budżecie czasowym. Łączy się je tak, żeby tanie deterministyczne
+sprawdzenia szły pierwsze, a kosztowny `LLMJudge` na końcu.
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import (
+    Contains,
+    IsInstance,
+    LLMJudge,
+    MaxDuration,
+)
+
+dataset = Dataset(
+    name="polaczone_ewaluatory",
+    cases=[Case(name="zwrot", inputs="Chcę zwrot pieniędzy")],
+    evaluators=[
+        # Najpierw szybkie, deterministyczne sprawdzenia.
+        IsInstance(type_name="str"),
+        Contains(value="30 dni", case_sensitive=False),
+        MaxDuration(seconds=2.0),
+        # Dopiero na końcu kosztowny sędzia LLM.
+        LLMJudge(rubric="Response is helpful and mentions the refund policy."),
+    ],
+)
+```
+
+<Callout kind="tip">
+Kolejność ma znaczenie praktyczne. Tanie sprawdzenia jak `IsInstance` czy `Contains` od razu
+wyłapują złamany kształt albo brakujące słowo kluczowe, więc nie marnujesz pieniędzy na
+`LLMJudge` dla przypadków, które i tak są ewidentnie błędne.
+</Callout>
+
+## Ewaluatory raportu dla całego eksperymentu
+
+Zwykłe ewaluatory liczą się raz na przypadek. Ewaluatory raportu działają inaczej:
+uruchamiają się raz po przejściu wszystkich przypadków i dostają cały
+<Term definition="EvaluationReport to pełny wynik eksperymentu: wszystkie przypadki z ich wejściami, wyjściami, oczekiwanymi wynikami, wynikami liczbowymi i asercjami. Ewaluator raportu liczy na nim statystyki obejmujące cały zbiór.">EvaluationReport</Term>.
+Dzięki temu policzysz statystyki obejmujące cały zbiór: macierz pomyłek, krzywą
+precyzja-pełność z polem pod krzywą czy zwykłą dokładność. Przekazujesz je przez parametr
+`report_evaluators` na `Dataset`.
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import ConfusionMatrixEvaluator
+
+
+def klasyfikator(tekst: str) -> str:
+    tekst = tekst.lower()
+    if "kot" in tekst or "miau" in tekst:
+        return "kot"
+    if "pies" in tekst or "hau" in tekst:
+        return "pies"
+    return "nieznane"
+
+
+dataset = Dataset(
+    name="klasyfikacja_zwierzat",
+    cases=[
+        Case(name="kot", inputs="Kot robi miau", expected_output="kot"),
+        Case(name="pies", inputs="Pies robi hau", expected_output="pies"),
+    ],
+    report_evaluators=[
+        ConfusionMatrixEvaluator(
+            predicted_from="output",
+            expected_from="expected_output",
+            title="Klasyfikacja zwierząt",
+        ),
+    ],
+)
+
+report = dataset.evaluate_sync(klasyfikator)
+# report.analyses zawiera wynik typu ConfusionMatrix.
+```
+
+Wbudowane ewaluatory raportu to `ConfusionMatrixEvaluator` (macierz pomyłek),
+`PrecisionRecallEvaluator` (krzywa precyzja-pełność z AUC), `ROCAUCEvaluator` i
+`KolmogorovSmirnovEvaluator`. Możesz też napisać własny, dziedzicząc po `ReportEvaluator` i
+zwracając `ScalarResult` albo `TableResult`. Gdy skonfigurujesz Logfire, analizy doczepiają
+się do spanu eksperymentu i renderują się w interfejsie jako mapy ciepła i wykresy.
+
+## Ewaluatory na spanach OTel
+
+Czasem poprawny wynik nie wystarcza. Agent mógł trafić w dobrą odpowiedź przez przypadek,
+nie wołając narzędzia, które powinien zawołać, albo wykonując o pięć rund za dużo.
+Ewaluacja na spanach sprawdza, **jak** agent doszedł do wyniku, a nie tylko **co** zwrócił.
+Wymaga zainstalowanego i skonfigurowanego `logfire`, bo opiera się na spanach OpenTelemetry
+przechwyconych w trakcie uruchomienia.
+
+```python
+import logfire
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import HasMatchingSpan
+
+logfire.configure(send_to_logfire="if-token-present")
+
+dataset = Dataset(
+    name="kontrola_zachowania",
+    cases=[Case(inputs="Znajdź zamówienie 12345")],
+    evaluators=[
+        # Narzędzie wyszukiwania musi zostać zawołane.
+        HasMatchingSpan(
+            query={"name_contains": "search_tool"},
+            evaluation_name="uzyto_wyszukiwania",
+        ),
+        # Zapytanie do bazy musi zmieścić się w 100 ms.
+        HasMatchingSpan(
+            query={"and_": [
+                {"name_contains": "database"},
+                {"max_duration": 0.1},
+            ]},
+            evaluation_name="szybka_baza",
+        ),
+        # Niebezpieczne narzędzie nie może zostać zawołane.
+        HasMatchingSpan(
+            query={"not_": {"name_contains": "delete_database"}},
+            evaluation_name="bezpieczne_wykonanie",
+        ),
+    ],
+)
+```
+
+`HasMatchingSpan` przyjmuje `SpanQuery`, czyli słownik warunków. Dopasujesz po nazwie
+(`name_contains`, `name_equals`, `name_matches_regex`), po atrybutach (`has_attributes`),
+po czasie (`min_duration`, `max_duration`), a nawet po relacjach rodzic-dziecko
+(`some_child_has`, `min_descendant_count`). Warunki łączysz operatorami `and_`, `or_` i
+`not_`. Do bardziej złożonej analizy piszesz własny ewaluator i sięgasz po `ctx.span_tree`,
+które pozwala przejść całe drzewo spanów i policzyć na przykład łączny czas wywołań modelu.
+
+<RunFlow
+  title="Ewaluacja na spanach"
+  nodes={[
+    { kind: "agent", label: "Agent", detail: "uruchomienie z logfire" },
+    { kind: "tool", label: "Spany OTel", detail: "narzędzia i czasy" },
+    { kind: "model", label: "HasMatchingSpan", detail: "zapytanie SpanQuery" },
+    { kind: "output", label: "Asercja", detail: "co i jak się wydarzyło" },
+  ]}
+/>
+
+<Callout kind="key">
+Ewaluacja na spanach testuje kontrakt zachowania, a nie tylko relację wejście-wyjście. To
+ona łapie regresje, w których wynik nadal jest poprawny, ale wewnętrzna logika się
+zepsuła, na przykład agent przestał korzystać z wyszukiwania, a odpowiada z pamięci.
+</Callout>
+
+## Zarządzanie zbiorami danych i serializacja
+
+Zbiór nie musi żyć tylko w kodzie. `pydantic-evals` serializuje `Dataset` do YAML albo JSON
+i wczytuje go z powrotem, więc golden dataset trzymasz w repozytorium jak każdy inny plik.
+Przy zapisie powstaje też plik schematu JSON, dzięki któremu edytor podpowiada pola i
+waliduje plik w locie. Pełny obieg w obie strony zachowuje przypadki, ewaluatory, a także
+ewaluatory raportu.
+
+```python
+from typing import Any
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import EqualsExpected, IsInstance
+
+dataset = Dataset[str, str, Any](
+    name="zestaw_golden",
+    cases=[
+        Case(name="francja", inputs="Stolica Francji?", expected_output="Paryż"),
+    ],
+    evaluators=[IsInstance(type_name="str"), EqualsExpected()],
+)
+
+# Zapis do YAML, obok powstaje zestaw_golden_schema.json.
+dataset.to_file("zestaw_golden.yaml")
+
+# Wczytanie z powrotem, format wnioskowany z rozszerzenia.
+wczytany = Dataset[str, str, Any].from_file("zestaw_golden.yaml")
+
+# Dokładanie przypadków w locie.
+wczytany.add_case(name="polska", inputs="Stolica Polski?", expected_output="Warszawa")
+```
+
+Wbudowane ewaluatory są rozpoznawane po nazwie automatycznie. Jeśli używasz własnego
+ewaluatora, podajesz jego typ przez `custom_evaluator_types=[...]` przy wczytywaniu, żeby
+`pydantic-evals` wiedział, jak go odtworzyć. Możesz też wygenerować cały zbiór modelem przez
+`generate_dataset`, podając schematy wejścia i wyjścia jako modele Pydantic.
+
+<Callout kind="tip">
+Trzymaj osobne zbiory do różnych celów: szybki smoke test krytycznych ścieżek, obszerny
+zestaw do dokładnej oceny i wąski zestaw regresyjny na konkretne błędy z przeszłości. Każdy
+z nich to zwykły plik YAML, który łatwo przejrzeć w pull requeście.
+</Callout>
+
+## Wielokrotne uruchomienia i ocena produkcji
+
+Prawdziwy model nie daje dwa razy tej samej odpowiedzi, więc pojedyncze przejście zbioru
+mówi mało o stabilności. Uruchamiając ten sam zbiór wiele razy, zobaczysz rozrzut wyników i
+odróżnisz przypadki, które model rozwiązuje pewnie, od tych, w których raz trafia, a raz nie.
+Ten sam pomysł rozszerza się na produkcję: ponieważ ewaluacja na spanach operuje na tych
+samych danych telemetrycznych, które zbierasz na produkcji, te same asercje możesz puszczać
+na ruchu rzeczywistym, czyli oceniać model online, a nie tylko na zafiksowanym zbiorze.
+
+```python
+import statistics
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import LLMJudge
+
+dataset = Dataset(
+    name="ocena_stabilnosci",
+    cases=[Case(name="zwrot", inputs="Chcę zwrot pieniędzy")],
+    evaluators=[LLMJudge(rubric="Response is empathetic and mentions the refund policy.")],
+)
+
+
+async def odpowiedz(zapytanie: str) -> str:
+    return "Rozumiem. Zgodnie z polityką masz 30 dni na zwrot."
+
+
+# Kilka uruchomień ujawnia rozrzut, którego jeden przebieg nie pokaże.
+wyniki: list[float] = []
+for _ in range(5):
+    report = dataset.evaluate_sync(odpowiedz)
+    przeszlo = sum(
+        1
+        for case in report.cases
+        for assertion in case.assertions.values()
+        if assertion.value
+    )
+    wyniki.append(przeszlo / max(len(report.cases), 1))
+
+print(f"srednia={statistics.mean(wyniki):.2f} odchylenie={statistics.pstdev(wyniki):.2f}")
+```
+
+Wysokie odchylenie to sygnał, że odpowiedź jest niestabilna i warto dopracować instrukcje
+albo dorzucić przypadki brzegowe. Na produkcji nie masz `expected_output` dla każdego
+żądania, więc opierasz się na ewaluatorach, które nie potrzebują wzorca: `LLMJudge` z
+rubryką, sprawdzenia obecności fraz albo asercje na spanach. To zamyka pętlę: te same
+kryteria, które pilnują jakości przy każdym commicie, pilnują jej też na żywym ruchu.
+
 ## Co dalej
 
 Umiesz już testować agenta bez wydawania ani grosza i mierzyć jakość jego odpowiedzi.

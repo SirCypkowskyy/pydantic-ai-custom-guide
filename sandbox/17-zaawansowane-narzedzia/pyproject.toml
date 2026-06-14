@@ -1,0 +1,6 @@
+[project]
+name = "ch17-zaawansowane-narzedzia"
+version = "0.1.0"
+description = "Chapter 17: Advanced tools and toolsets in Pydantic AI."
+requires-python = ">=3.12"
+dependencies = ["pydantic-ai>=1.0", "pai-sandbox-shared"]

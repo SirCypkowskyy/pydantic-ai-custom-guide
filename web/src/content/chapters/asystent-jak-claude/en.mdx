@@ -20,40 +20,54 @@ approval layer keeps a human in the loop.
   ]}
 />
 
-## Skills as toolsets
+## Skills as capabilities
 
-In Pydantic AI a skill or plugin is simply a <Term definition="A toolset is a named group of tools you can attach to an agent. It lets you group and enable skills independently.">toolset</Term>.
-Each toolset groups related functions, and the agent gets as many of them as you decide to
-give it for a run. That means you switch skills on and off like plugins, without rewriting
-the agent.
+The closest match to Claude's skills and plugins in Pydantic AI is a
+<Term definition="A capability is a reusable, composable unit of agent behavior. It can bundle tools, instructions, model settings, and lifecycle hooks at once.">capability</Term>.
+One capability packages related tools, instructions, model settings, and hooks into a single
+unit that you pass via `capabilities=`. It is the primary extension point of the framework.
+
+Better still, with `defer_loading=True` a capability becomes on-demand, exactly like Claude's
+skills. The model first sees a one-line catalog entry, and only loads the full skill (its
+tools and instructions) when it needs it, through the built-in `load_capability` tool. This
+is the same progressive disclosure Claude is known for.
 
 ```python
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
 
-# A "weather" skill as a separate toolset.
-weather = FunctionToolset()
+# A "weather" skill as an on-demand capability.
+weather = Capability(
+    id="weather",
+    description="Check the weather for a city.",
+    instructions="Report the temperature concisely.",
+    defer_loading=True,
+)
 
 
-@weather.tool
-def temperature(ctx: RunContext[None], city: str) -> str:
+@weather.tool_plain
+def temperature(city: str) -> str:
     """Return the current temperature for a city."""
     return f"It is 18 degrees in {city}."
 
 
 agent = Agent(
     "openai:gpt-5.2",
-    instructions="You are a helpful assistant. Use the available tools.",
-    toolsets=[weather],
+    instructions="You are a helpful assistant.",
+    capabilities=[weather],
 )
 ```
 
-Every extra toolset is another plugin. You can keep a files skill, a calendar skill, and a
-search skill separate, then assemble an agent from any combination of them.
+On the first turn the capability is collapsed to a catalog entry. When the model decides it
+needs the skill, it calls `load_capability`, and the skill's tools and instructions become
+active for the following requests. Each extra skill is another unit in the `capabilities`
+list, so you assemble the agent exactly like plugins.
 
-<Callout kind="tip">
-Keep one skill per toolset. They are easier to test in isolation, and when you build the
-agent you pick only the ones you actually need for a given mode.
+<Callout kind="key">
+A capability brings more than tools. Its instructions, model settings, and lifecycle hooks
+activate together with them. Pydantic AI also ships native capabilities such as `Thinking()`
+(reasoning) and web search, which you add to the same list to give the assistant the powers
+you associate with Claude. There is a whole chapter on this: "Capabilities & hooks".
 </Callout>
 
 ## MCP servers as external plugins
@@ -182,7 +196,7 @@ on.[^claude]
 ## What is next
 
 The full, working version of this assistant, including the approval loop in the terminal,
-lives in `sandbox/16-asystent-jak-claude`. It is a good starting point for your own project:
+lives in `sandbox/20-asystent-jak-claude`. It is a good starting point for your own project:
 add your own toolsets, connect the MCP server you use day to day, and wire up an interface.
 
 [^claude]: Claude Code itself works on similar principles: skills, MCP servers, and an approval prompt for sensitive operations.

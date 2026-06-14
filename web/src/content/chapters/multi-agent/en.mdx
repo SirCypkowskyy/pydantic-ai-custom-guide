@@ -205,6 +205,190 @@ randomness or external side effects inside a node without thinking about how the
 after a resume.
 </Callout>
 
+## Four durable execution engines
+
+DBOS is only one choice. Pydantic AI officially supports four durable execution solutions,
+and each one is co-maintained by the Pydantic team and a vendor. They all use only the
+agent's public interface, so they double as a reference when you want to wire an agent into
+your own system.
+
+- **Temporal**: a mature workflow engine with a separate worker and server. A good fit when
+  you already run Temporal infrastructure or need long, asynchronous processes.
+- **DBOS**: a lightweight library that records state in a database (SQLite or Postgres, for
+  example). No separate server, which is what we showed above.
+- **Prefect**: an orchestration engine popular in data engineering, with a ready-made view
+  of runs.
+- **Restate**: an engine focused on durable, fault-tolerant invocations and human-in-the-loop
+  workflows.
+
+Whatever the engine, the pattern is the same: you wrap the agent in that backend's adapter
+and keep calling the ordinary `run`. Streaming and MCP work the same way, just with fault
+tolerance.
+
+```python
+from temporalio.client import Client
+from temporalio.worker import Worker
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import TemporalAgent
+
+agent = Agent("openai:gpt-5.2", instructions="You are a geography expert.", name="geo")
+durable_agent = TemporalAgent(agent)
+
+
+async def main() -> None:
+    client = await Client.connect("localhost:7233")
+    # the worker registers an agent-backed workflow; details depend on the engine
+    async with Worker(client, task_queue="geo", workflows=[...]):
+        result = await durable_agent.run("What is the capital of Mexico?")
+        print(result.output)
+        #> The capital of Mexico is Mexico City (Ciudad de México).
+```
+
+<Callout kind="tip">
+Choosing an engine is mostly an operational decision, not a change to your agent code. Start
+with DBOS when you do not want a separate server, and reach for Temporal or Restate when you
+need long processes or human-in-the-loop steps in production.
+</Callout>
+
+## Code Mode: the model writes code instead of calling tools one by one
+
+Standard tool calling carries one cost: every call is a separate round-trip to the model. An
+agent that needs to fetch ten records and process each one makes eleven or more model
+requests. That is slow, expensive, and context-heavy.
+
+<Term definition="Code Mode is a capability from the Pydantic AI Harness package that wraps all of an agent's tools into a single run_code tool running in a sandbox.">Code Mode</Term>
+flips this around. Instead of exposing a list of tools to the model, you wrap them in a
+single `run_code` tool powered by the Monty sandbox. The model writes a piece of Python that
+calls many tools with loops, conditionals, and `asyncio.gather`, all inside one tool call.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+agent = Agent("openai:gpt-5.2", capabilities=[CodeMode()])
+
+
+@agent.tool_plain
+def get_weather(city: str) -> dict:
+    """Get current weather for a city."""
+    return {"city": city, "temp_f": 72, "condition": "sunny"}
+
+
+@agent.tool_plain
+def convert_temp(fahrenheit: float) -> float:
+    """Convert Fahrenheit to Celsius."""
+    return round((fahrenheit - 32) * 5 / 9, 1)
+
+
+result = agent.run_sync("What's the weather in Paris and Tokyo, in Celsius?")
+print(result.output)
+```
+
+The model does not call `get_weather` or `convert_temp` separately. Instead it writes and
+runs code in the sandbox that gathers everything in one pass:
+
+```python
+paris, tokyo = await asyncio.gather(
+    get_weather(city="Paris"),
+    get_weather(city="Tokyo"),
+)
+paris_c = await convert_temp(fahrenheit=paris["temp_f"])
+tokyo_c = await convert_temp(fahrenheit=tokyo["temp_f"])
+{"paris": paris_c, "tokyo": tokyo_c}
+```
+
+Four tool calls collapse into one model round-trip. The `CodeMode` capability comes from the
+Pydantic AI Harness package, the official capability library for Pydantic AI.
+
+<Callout kind="note">
+Code Mode runs the generated code in the Monty sandbox with restrictions, so the model
+cannot reach beyond the tools you exposed. It is a capability, not a plain tool: you add it
+through `capabilities=[CodeMode()]`, and you install the Harness with the
+`pydantic-ai-harness[code-mode]` extra.
+</Callout>
+
+## The graph builder: steps, decisions, and parallelism
+
+The `BaseNode` style we showed earlier is object-oriented and a great fit for state
+machines. Alongside it, `pydantic-graph` has a second, newer API: `GraphBuilder`. It is a
+builder pattern where steps are decorated functions and you declare edges explicitly. Same
+tool, different style, better for declarative parallelism.
+
+`GraphBuilder` gives you a few building blocks:
+
+- **Step** (`@g.step`): a node that runs an async function, with access to `ctx.state`,
+  `ctx.deps`, and `ctx.inputs`.
+- **Decision**: a node that branches on a condition.
+- **Spread and Broadcast**: `.map()` fans each item of an iterable out to a separate,
+  parallel execution of a step, while broadcast sends the same data to several paths at once.
+- **Join and Reducer**: a node that collects results from parallel paths using a reducer,
+  for example `reduce_list_append`.
+
+Below the start node receives a list of numbers, `.map()` fans each one out to a separate
+execution of the `square` step, and a `join` glues the results back together.
+
+```python
+from dataclasses import dataclass
+
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
+
+
+@dataclass
+class State:
+    processed: int = 0
+
+
+async def main() -> None:
+    g = GraphBuilder(
+        state_type=State,
+        input_type=list[int],
+        output_type=list[int],
+    )
+
+    @g.step
+    async def square(ctx: StepContext[State, None, int]) -> int:
+        ctx.state.processed += 1
+        return ctx.inputs * ctx.inputs
+
+    collect = g.join(reduce_list_append, initial_factory=list[int])
+
+    g.add(
+        g.edge_from(g.start_node).map().to(square),
+        g.edge_from(square).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    graph = g.build()
+    state = State()
+    result = await graph.run(state=state, inputs=[1, 2, 3, 4, 5])
+    print(sorted(result))
+    #> [1, 4, 9, 16, 25]
+    print(state.processed)
+    #> 5
+```
+
+<RunFlow
+  title="The graph builder: map fans work out, join glues it back"
+  nodes={[
+    { kind: "user", label: "Input", detail: "list [1..5]" },
+    { kind: "tool", label: "map -> square", detail: "5 parallel steps" },
+    { kind: "tool", label: "join (reducer)", detail: "reduce_list_append" },
+    { kind: "output", label: "Output", detail: "[1, 4, 9, 16, 25]" },
+  ]}
+/>
+
+Both APIs are fully supported and can be combined. There is one important difference, though:
+the builder has no built-in state persistence, because consistent snapshots under
+parallelism are hard. When you need to resume after a failure, pair the builder with one of
+the durable execution engines from the earlier sections.
+
+<Callout kind="warning">
+The graph builder does not persist state on its own, unlike the `BaseNode` API. If a flow
+must survive a process restart, back it with a durable execution engine (Temporal, DBOS,
+Prefect, or Restate) rather than the builder alone.
+</Callout>
+
 ## What is next
 
 You now have four tools for combining agents: delegation, programmatic hand-off, graphs,

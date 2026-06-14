@@ -1,13 +1,18 @@
-import { AlertTriangle, Info, Lightbulb, OctagonAlert, Sparkles } from "lucide-react";
-import type { ReactNode } from "react";
+import { AlertTriangle, Info, OctagonAlert } from "lucide-react";
+import type { ComponentType, ReactNode } from "react";
+import { AnimateIcon } from "@/components/animate-ui/icons/icon";
+import { Lightbulb } from "@/components/animate-ui/icons/lightbulb";
+import { Sparkles } from "@/components/animate-ui/icons/sparkles";
 import { useLanguage } from "@/hooks/use-language";
 import { cn } from "@/lib/utils";
 
 type CalloutKind = "note" | "tip" | "warning" | "danger" | "key";
 
+type CalloutIcon = ComponentType<{ className?: string; animateOnView?: boolean }>;
+
 const CONFIG: Record<
   CalloutKind,
-  { icon: typeof Info; cls: string; label: Record<"pl" | "en", string> }
+  { icon: CalloutIcon; cls: string; label: Record<"pl" | "en", string> }
 > = {
   note: {
     icon: Info,
@@ -46,16 +51,18 @@ export function Callout({ kind = "note", title, children }: CalloutProps) {
   const { lang } = useLanguage();
   const { icon: Icon, cls, label } = CONFIG[kind];
   return (
-    <div className={cn("my-6 rounded-xl border p-4 pl-4", cls)}>
-      <div className="mb-1.5 flex items-center gap-2">
-        <Icon className="callout-icon size-4.5 shrink-0" />
-        <span className="font-display text-sm font-semibold tracking-tight">
-          {title ?? label[lang]}
-        </span>
+    <AnimateIcon animateOnHover asChild>
+      <div className={cn("my-6 rounded-xl border p-4 pl-4", cls)}>
+        <div className="mb-1.5 flex items-center gap-2">
+          <Icon className="callout-icon size-4.5 shrink-0" />
+          <span className="font-display text-sm font-semibold tracking-tight">
+            {title ?? label[lang]}
+          </span>
+        </div>
+        <div className="callout-body text-sm leading-relaxed text-foreground/85 [&>:first-child]:mt-0 [&>:last-child]:mb-0 [&>p]:my-2">
+          {children}
+        </div>
       </div>
-      <div className="callout-body text-sm leading-relaxed text-foreground/85 [&>:first-child]:mt-0 [&>:last-child]:mb-0 [&>p]:my-2">
-        {children}
-      </div>
-    </div>
+    </AnimateIcon>
   );
 }

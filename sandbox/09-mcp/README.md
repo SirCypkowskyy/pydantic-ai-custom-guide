@@ -1,28 +1,28 @@
 # 09 - MCP (Model Context Protocol)
 
-Towarzyszy rozdziałowi [MCP](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/mcp).
+Accompanies the [MCP](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/mcp) chapter.
 
-Pokazuje, jak agent korzysta z narzędzi udostępnianych przez **osobny proces** zamiast
-definiować je inline przez `@agent.tool`. Lokalny serwer MCP (`dice_server.py`) jest
-uruchamiany przez `MCPServerStdio` i podpinany do agenta przez `toolsets=[...]`. Model
-sam odkrywa narzędzia serwera (`roll_dice`, `sum_values`) i wywołuje je w trakcie biegu.
+Shows how an agent uses tools exposed by a **separate process** instead of
+defining them inline through `@agent.tool`. A local MCP server (`dice_server.py`) is
+launched through `MCPServerStdio` and wired into the agent through `toolsets=[...]`. The model
+discovers the server's tools (`roll_dice`, `sum_values`) on its own and calls them during the run.
 
-Połączenie MCP otwieramy przez `async with agent:`, dzięki czemu podproces serwera jest
-startowany i zamykany czysto wokół wywołania `run`.
+We open the MCP connection through `async with agent:`, so that the server subprocess is
+started and shut down cleanly around the `run` call.
 
-## Pliki
+## Files
 
-- `dice_server.py` - minimalny serwer MCP (FastMCP) z dwoma narzędziami na transporcie stdio.
-- `main.py` - agent łączący się z serwerem i wykonujący zadanie wymagające narzędzi.
+- `dice_server.py` - a minimal MCP server (FastMCP) with two tools over the stdio transport.
+- `main.py` - the agent connecting to the server and performing a task that requires tools.
 
-## Uruchomienie
+## Running
 
 ```bash
-# z katalogu sandbox/
+# from the sandbox/ directory
 uv run 09-mcp/main.py
 
 # smoke test
 uv run pytest 09-mcp/smoke_test.py
 ```
 
-Wymaga `OLLAMA_CLOUD_API_KEY` w pliku `.env` w katalogu głównym repozytorium.
+Requires `OLLAMA_CLOUD_API_KEY` in the `.env` file in the repository root.

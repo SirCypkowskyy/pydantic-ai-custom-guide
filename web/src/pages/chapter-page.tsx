@@ -1,5 +1,8 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft, ArrowRight, Clock } from "lucide-react";
+import { ArrowLeft } from "@/components/animate-ui/icons/arrow-left";
+import { ArrowRight } from "@/components/animate-ui/icons/arrow-right";
+import { Clock } from "@/components/animate-ui/icons/clock";
+import { AnimateIcon } from "@/components/animate-ui/icons/icon";
 import { ChapterIcon } from "@/components/chapter-icon";
 import { DifficultyBadge } from "@/components/difficulty-badge";
 import { Button } from "@/components/ui/button";
@@ -62,7 +65,7 @@ export function ChapterPage({ slug }: { slug: string }) {
             <div className="flex flex-wrap items-center gap-3 pt-1">
               <DifficultyBadge difficulty={chapter.difficulty} />
               <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground tabular-nums">
-                <Clock className="size-3.5" />
+                <Clock className="size-3.5" animateOnView />
                 {chapter.minutes} {t("common.minutes")}
               </span>
             </div>
@@ -74,28 +77,32 @@ export function ChapterPage({ slug }: { slug: string }) {
 
       <nav className="flex items-center justify-between gap-4 border-t pt-8">
         {prev ? (
-          <Button asChild variant="ghost" className="h-auto justify-start gap-3 py-3 text-left">
-            <Link to="/chapters/$slug" params={{ slug: prev.slug }}>
-              <ArrowLeft className="size-4 shrink-0" />
-              <span className="flex flex-col">
-                <span className="text-xs text-muted-foreground">{t("common.previous")}</span>
-                <span className="font-medium">{prev.title[lang]}</span>
-              </span>
-            </Link>
-          </Button>
+          <AnimateIcon animateOnHover asChild>
+            <Button asChild variant="ghost" className="h-auto justify-start gap-3 py-3 text-left">
+              <Link to="/chapters/$slug" params={{ slug: prev.slug }}>
+                <ArrowLeft className="size-4 shrink-0" />
+                <span className="flex flex-col">
+                  <span className="text-xs text-muted-foreground">{t("common.previous")}</span>
+                  <span className="font-medium">{prev.title[lang]}</span>
+                </span>
+              </Link>
+            </Button>
+          </AnimateIcon>
         ) : (
           <span />
         )}
         {next ? (
-          <Button asChild variant="ghost" className="h-auto justify-end gap-3 py-3 text-right">
-            <Link to="/chapters/$slug" params={{ slug: next.slug }}>
-              <span className="flex flex-col">
-                <span className="text-xs text-muted-foreground">{t("common.next")}</span>
-                <span className="font-medium">{next.title[lang]}</span>
-              </span>
-              <ArrowRight className="size-4 shrink-0" />
-            </Link>
-          </Button>
+          <AnimateIcon animateOnHover asChild>
+            <Button asChild variant="ghost" className="h-auto justify-end gap-3 py-3 text-right">
+              <Link to="/chapters/$slug" params={{ slug: next.slug }}>
+                <span className="flex flex-col">
+                  <span className="text-xs text-muted-foreground">{t("common.next")}</span>
+                  <span className="font-medium">{next.title[lang]}</span>
+                </span>
+                <ArrowRight className="size-4 shrink-0" />
+              </Link>
+            </Button>
+          </AnimateIcon>
         ) : (
           <span />
         )}

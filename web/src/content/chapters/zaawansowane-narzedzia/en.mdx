@@ -1,0 +1,372 @@
+A basic tool is a function with the `@agent.tool` decorator. That is enough for many projects, but
+harder questions show up eventually. How do you expose a tool only during part of a run? How do you
+force the model to call something? How do you return an image alongside text? How do you compose
+dozens of tools into one coherent, testable whole?
+
+This chapter gathers the advanced tool mechanisms in Pydantic AI: dynamic definitions, controlling
+tool choice, rich return values, retries and timeouts, parallel execution, and the toolset algebra.
+At the end we add provider-executed tools and ready-made search tools.
+
+## Dynamic tools with prepare
+
+Sometimes a tool should be visible to the model only under certain conditions, or its description
+should depend on the data. That is what the `prepare` function is for. It runs at each step of the
+run, receives a `RunContext` and a pre-built `ToolDefinition`, and returns one of three things: that
+same `ToolDefinition`, a modified `ToolDefinition`, or `None`. Returning `None` means the tool is
+absent for that step.
+
+```python
+from pydantic_ai import Agent, RunContext, ToolDefinition
+
+agent = Agent("test")
+
+
+async def only_if_42(
+    ctx: RunContext[int], tool_def: ToolDefinition
+) -> ToolDefinition | None:
+    if ctx.deps == 42:
+        return tool_def
+    return None
+
+
+@agent.tool(prepare=only_if_42)
+def hitchhiker(ctx: RunContext[int], answer: str) -> str:
+    return f"{ctx.deps} {answer}"
+
+
+result = agent.run_sync("testing...", deps=41)
+print(result.output)
+#> success (no tool calls)
+result = agent.run_sync("testing...", deps=42)
+print(result.output)
+#> {"hitchhiker":"42 a"}
+```
+
+A `ToolPrepareFunc` can also change the schema itself. You might, for instance, append a description
+to a parameter based on `ctx.deps` before the definition reaches the model. That is a tidy way to let
+one tool adapt to context instead of writing several separate versions.
+
+<Callout kind="note">
+`prepare` works at the level of a single tool. If you want to enable or disable many tools at once,
+or change them globally, reach for `prepare_tools` described below.
+</Callout>
+
+## prepare_tools for the whole agent
+
+Alongside the per-tool `prepare`, there is a `prepare_tools` function that works for the whole agent.
+It receives a `RunContext` and the list of all `ToolDefinition`s (from tools and from toolsets) and
+returns a new list of definitions. This is a good place for global logic: disabling a group of tools,
+changing descriptions, or setting strict mode on every tool.
+
+```python
+from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
+from pydantic_ai.capabilities import PrepareTools
+
+
+def launch_potato(target: str) -> str:
+    return f"Potato launched at {target}!"
+
+
+async def filter_out_tools_by_name(
+    ctx: RunContext[bool], tool_defs: list[ToolDefinition]
+) -> list[ToolDefinition] | None:
+    if ctx.deps:
+        return [td for td in tool_defs if td.name != "launch_potato"]
+    return tool_defs
+
+
+agent = Agent(
+    "test",
+    tools=[Tool(launch_potato)],
+    capabilities=[PrepareTools(filter_out_tools_by_name)],
+    deps_type=bool,
+)
+
+result = agent.run_sync("testing...", deps=False)
+print(result.output)
+#> {"launch_potato":"Potato launched at a!"}
+result = agent.run_sync("testing...", deps=True)
+print(result.output)
+#> success (no tool calls)
+```
+
+If you use both mechanisms together, the per-tool `prepare` is applied first to each tool, and only
+then is `prepare_tools` called with the resulting list.
+
+<Callout kind="warning">
+Returning `None` from `prepare_tools` disables every tool for that step and is treated as deprecated
+behavior. To keep tools unchanged, return the `tool_defs` argument. To intentionally expose no tools,
+return an empty list `[]`.
+</Callout>
+
+## Controlling tool choice
+
+The `tool_choice` setting in `ModelSettings` decides whether, and which, tools the model may call in a
+given request. It applies to function tools, not to the internal output tools.
+
+| Value | Meaning |
+| --- | --- |
+| `'auto'` (default) | the model decides, all tools available |
+| `'none'` | function tools disabled, the model answers with text |
+| `'required'` | the model must call some function tool |
+| `['tool_a', ...]` | restrict to specific tools by name |
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ToolOrOutput
+
+agent = Agent(TestModel())
+
+
+@agent.tool_plain
+def get_weather(city: str) -> str:
+    return f"Sunny in {city}"
+
+
+@agent.tool_plain
+def get_time(city: str) -> str:
+    return f"12:00 in {city}"
+
+
+# Disable function tools for this request
+result = agent.run_sync("Hello", model_settings={"tool_choice": "none"})
+
+# Restrict to a single tool while keeping the output tools
+result = agent.run_sync(
+    "Hello",
+    model_settings={"tool_choice": ToolOrOutput(function_tools=["get_weather"])},
+)
+```
+
+<Callout kind="warning">
+The values `'required'` and a list of names exclude the output tools. Set statically for the whole run,
+they would force the model to call a tool on every step and leave it unable to produce a final answer,
+so `agent.run()` raises an error in that case. To vary `tool_choice` per step, return settings from a
+capability's `get_model_settings`, or use a direct model request.
+</Callout>
+
+## Rich returns with ToolReturn
+
+By default a tool returns whatever Pydantic can serialize to JSON. It can also return multimodal
+content, such as `ImageUrl` or `DocumentUrl`. When you need more control, reach for `ToolReturn`. It
+separates three things: the value returned to your application, the content sent to the model as a
+separate user message, and metadata the model never sees.
+
+```python
+from pydantic_ai import Agent, BinaryContent, ToolReturn
+from pydantic_ai.models.test import TestModel
+
+agent = Agent(TestModel())
+
+
+@agent.tool_plain
+def click_and_capture(x: int, y: int) -> ToolReturn:
+    """Click at coordinates and show before/after screenshots."""
+    before = BinaryContent(data=b"\x89PNG", media_type="image/png")
+    after = BinaryContent(data=b"\x89PNG", media_type="image/png")
+    return ToolReturn(
+        return_value=f"Clicked at ({x}, {y})",
+        content=["Before:", before, "After:", after],
+        metadata={"coordinates": {"x": x, "y": y}, "action": "click"},
+    )
+
+
+result = agent.run_sync("Click the submit button and tell me what happened")
+print(result.output)
+#> {"click_and_capture":"Clicked at (0, 0)"}
+```
+
+The `return_value` field is the result handed to the model as the tool's output. The `content` field
+is sent separately, perfect for images to analyze. The `metadata` field stays on the application side,
+so it suits logging and debugging. Some frameworks call this feature "artifacts".
+
+## Retries and timeouts
+
+When the model passes bad arguments to a tool, Pydantic AI raises a `RetryPromptPart` with the error
+details on its own and lets the model try again. You can also force a retry manually by raising
+`ModelRetry` from inside the tool. That helps when the arguments were type-valid, but something went
+wrong during execution.
+
+```python
+from pydantic_ai import ModelRetry
+
+
+def my_flaky_tool(query: str) -> str:
+    if query == "bad":
+        raise ModelRetry("The query 'bad' is not allowed. Please provide a different one.")
+    return "Success!"
+```
+
+You set the retry limit per tool via `Tool(max_retries=N)` or `@agent.tool(retries=N)`, per toolset via
+`FunctionToolset(max_retries=N)`, or agent-wide via `Agent(retries={'tools': N})`. The counters are
+tracked separately for each tool. Once a tool exhausts its limit, the run ends with an
+`UnexpectedModelBehavior` exception.
+
+Timeouts work separately. Set `tool_timeout` on the agent as a default, and `timeout` on a specific
+tool to override it. Exceeding the limit is treated as a failure and also sends a retry prompt to the
+model, counting toward the retry limit.
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+
+agent = Agent("test", tool_timeout=30)
+
+
+@agent.tool_plain
+async def slow_tool() -> str:
+    """Uses the agent's default timeout (30 seconds)."""
+    await asyncio.sleep(10)
+    return "Done"
+
+
+@agent.tool_plain(timeout=5)
+async def fast_tool() -> str:
+    """Has its own timeout (5 seconds) that overrides the default."""
+    await asyncio.sleep(1)
+    return "Done"
+```
+
+## Parallel versus sequential execution
+
+When the model returns several tool calls in one response, Pydantic AI runs them concurrently via
+`asyncio.create_task`. Async functions go on the event loop, while sync functions are offloaded to
+threads. That is why, for simple operations, it pays to write async functions and reserve threads for
+blocking I/O or CPU-bound work.
+
+<RunFlow
+  title="Several tool calls from one model response"
+  nodes={[
+    { kind: "model", label: "Model", detail: "returns three calls" },
+    { kind: "tool", label: "Tool A", detail: "concurrent task" },
+    { kind: "tool", label: "Tool B", detail: "concurrent task" },
+    { kind: "agent", label: "Agent", detail: "collects results" },
+  ]}
+/>
+
+If a tool requires serial execution, mark it with the `sequential` flag at registration, or wrap the
+run in the `agent.parallel_tool_call_execution_mode('sequential')` context manager. You can cap the
+number of calls in a run with `UsageLimits(tool_calls_limit=...)`.
+
+## The toolset algebra
+
+A toolset is a collection of tools you register in one go and compose with others. A `FunctionToolset`
+exposes local functions, and the `@toolset.tool` decorator adds tools to it. You merge several
+toolsets into one with `CombinedToolset`, and every toolset has methods that return a modified version
+of it.
+
+| Method | What it does |
+| --- | --- |
+| `.filtered(fn)` | keeps only tools for which `fn` returns true |
+| `.prefixed(prefix)` | adds a prefix to names to avoid clashes |
+| `.renamed(mapping)` | renames tools using a new-to-old dictionary |
+| `.prepared(fn)` | modifies the list of definitions like `prepare_tools` |
+| `.approval_required(fn)` | requires approval for selected calls |
+
+```python
+from pydantic_ai import Agent, CombinedToolset, FunctionToolset
+from pydantic_ai.models.test import TestModel
+
+
+def temperature_celsius(city: str) -> float:
+    return 21.0
+
+
+def temperature_fahrenheit(city: str) -> float:
+    return 69.8
+
+
+weather = FunctionToolset(tools=[temperature_celsius, temperature_fahrenheit])
+combined = CombinedToolset([weather.prefixed("weather")])
+
+# Keep only Celsius
+filtered = combined.filtered(lambda ctx, td: "fahrenheit" not in td.name)
+
+agent = Agent(TestModel(), toolsets=[filtered])
+result = agent.run_sync("What tools are available?")
+print([t.name for t in result.all_messages()])
+```
+
+These methods return new toolsets, so they chain easily. You can write, for example,
+`weather.prefixed("weather").filtered(...).prepared(...)`. A `PreparedToolset` cannot add or rename
+tools; for that you use `FunctionToolset.add_function()` and `RenamedToolset`.
+
+<Mermaid
+  caption="Composing toolsets into a chain of transformations"
+  chart={`flowchart LR
+    W[weather toolset] --> P[prefixed weather]
+    D[datetime toolset] --> C[CombinedToolset]
+    P --> C
+    C --> F[filtered]
+    F --> R[prepared]
+    R --> A[Agent]`}
+/>
+
+## Approving calls
+
+An `ApprovalRequiredToolset`, available through `.approval_required(fn)`, lets you require human
+approval for selected calls. The function receives a `RunContext`, a `ToolDefinition`, and the
+validated arguments, and returns whether a given call needs approval. To handle such runs, add
+`DeferredToolRequests` to your `output_type`. The run then ends with an object holding a list of
+pending calls, and you pass the approval results into the next run via `deferred_tool_results`.
+
+## Provider-executed tools
+
+Some tools are executed by the model provider itself, not by Pydantic AI. You pass them in the
+`capabilities` list, wrapped in `NativeTool`. The most common are `WebSearchTool` for searching the
+web and `CodeExecutionTool` for running code in a secure environment.
+
+```python
+from pydantic_ai import Agent, WebSearchTool
+from pydantic_ai.capabilities import NativeTool
+
+agent = Agent(
+    "anthropic:claude-sonnet-4-6",
+    capabilities=[NativeTool(WebSearchTool())],
+)
+
+result = agent.run_sync("Give me a sentence with the biggest news in AI this week.")
+print(result.output)
+```
+
+With OpenAI, web search access requires their Responses API, so you pass the model as
+`openai-responses:gpt-5.2`. You add `CodeExecutionTool` the same way, wrapped in `NativeTool`.
+
+<Callout kind="key">
+Not every provider supports native tools. If you use `WebSearchTool` with a provider that does not
+support it, Pydantic AI raises a `UserError` at run time. For a provider-agnostic approach with a
+local fallback, there are capabilities like `WebSearch` and `WebFetch`.
+</Callout>
+
+## Ready-made search tools
+
+Beyond native tools, Pydantic AI ships ready-made search tools that it executes itself, on your side.
+`duckduckgo_search_tool` needs no API key and installs with the `pydantic-ai-slim[duckduckgo]` group.
+`tavily_search_tool` uses the paid Tavily API and takes a key.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
+
+agent = Agent(
+    "openai:gpt-5.2",
+    tools=[duckduckgo_search_tool()],
+    instructions="Search DuckDuckGo and return the results.",
+)
+
+result = agent.run_sync("List the five highest-grossing animated films of 2025.")
+print(result.output)
+```
+
+Unlike `WebSearchTool`, these are regular function tools. They go into `tools`, not `capabilities`,
+work with any provider, and Pydantic AI runs the query itself. `tavily_search_tool` additionally lets
+you lock in some parameters, such as `max_results` or `include_domains`, hiding them from the model.
+
+## What is next
+
+You now have a full toolbox: dynamic definitions, choice control, rich returns, retries, timeouts,
+parallelism, and the toolset algebra, plus native tools and ready-made search engines. In the next
+chapter we assemble these pieces into a larger application with several agents. The runnable code for
+this chapter lives in `sandbox/17-zaawansowane-narzedzia`.

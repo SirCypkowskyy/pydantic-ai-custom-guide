@@ -1,0 +1,254 @@
+So far every prompt we have sent has been text. But models can do more today: they accept
+images, audio, video, and documents, and some can also "think out loud" before producing a
+final answer. Pydantic AI gives you a consistent, typed interface for both, and it works
+the same way regardless of provider.
+
+This chapter covers two independent topics. First, multimodal input, meaning passing more
+than a plain string into a run. Then the thinking mechanism, meaning asking the model to
+reason step by step and reading that reasoning back from the response.
+
+## A list instead of a string
+
+When you call `run_sync("...")`, you pass a single string. To add an image or a document,
+you pass a list instead. The list can mix text with content objects, and the model
+receives all of it together as one user prompt.
+
+```python
+from pydantic_ai import Agent, ImageUrl
+
+agent = Agent("openai:gpt-5.2")
+
+result = agent.run_sync(
+    [
+        "What company is this logo from?",
+        ImageUrl(url="https://iili.io/3Hs4FMg.png"),
+    ]
+)
+print(result.output)
+#> This is the logo for Pydantic, a data validation library in Python.
+```
+
+The order of items matters. The text describes what the model should do, and the content
+object supplies the material. You can add several images or several questions in one list.
+
+## Five kinds of content
+
+Pydantic AI exposes a separate type for each kind of material. Four of them describe a file
+by its URL, and the fifth, <Term definition="BinaryContent carries the raw bytes of a file along with its MIME type. You use it when you have the data locally rather than at a URL.">BinaryContent</Term>,
+carries raw bytes.
+
+| Type | What it is for |
+| --- | --- |
+| `ImageUrl` | an image at a URL |
+| `AudioUrl` | an audio recording at a URL |
+| `VideoUrl` | a video at a URL |
+| `DocumentUrl` | a document, such as a PDF, at a URL |
+| `BinaryContent` | raw bytes of any of the above |
+
+When you have a file locally, you read its bytes and wrap them in `BinaryContent` together
+with a MIME type. The same call works for an image, audio, video, or document, because the
+`media_type` is what decides the kind.
+
+```python
+from pathlib import Path
+
+from pydantic_ai import Agent, BinaryContent
+
+agent = Agent("anthropic:claude-sonnet-4-6")
+
+pdf = Path("report.pdf")
+result = agent.run_sync(
+    [
+        "Summarize the main findings of this document.",
+        BinaryContent(data=pdf.read_bytes(), media_type="application/pdf"),
+    ]
+)
+print(result.output)
+#> The document discusses quarterly results and next-year projections.
+```
+
+<Callout kind="key">
+URL versus bytes is not just convenience. With a `...Url` type, Pydantic AI sends the URL
+by default and the provider downloads the file on its side. `BinaryContent` always sends
+the data you hold in memory. This distinction decides who needs access to the file.
+</Callout>
+
+## TextContent, text with metadata
+
+Sometimes you want to pass text but attach information the model should not see. That is
+what `TextContent` is for. The `content` field reaches the model like a plain string, but
+`metadata` stays on the message side and is never sent to the model.
+
+```python
+from pydantic_ai import Agent, TextContent
+
+agent = Agent("openai:gpt-5.2")
+
+result = agent.run_sync(
+    [
+        "List the key points from this text.",
+        TextContent(
+            content="Pydantic AI is a Python agent framework.",
+            metadata={"source": "notes.txt"},
+        ),
+    ]
+)
+print(result.output)
+```
+
+Metadata is handy when you later inspect the message history and want to know where a piece
+of text came from. The model does not see it, so it does not clutter the prompt.
+
+## Support depends on the model
+
+This is the most important pitfall. Not every model accepts every kind of content, and even
+when it does, the delivery method can differ. For one provider a `DocumentUrl` can be sent
+as the URL itself, while for another Pydantic AI must download the file first and send the
+bytes.
+
+<Mermaid
+  caption="What happens to a file URL depending on the provider"
+  chart={`flowchart TD
+    U[File URL part] --> Q{Provider supports this URL?}
+    Q -->|yes, sends address| P[Provider downloads file]
+    Q -->|yes, but downloads locally| L[Pydantic AI fetches bytes]
+    Q -->|no| E[Unsupported]
+    L --> S[Provider receives bytes]`}
+/>
+
+A few concrete points from the current docs. `OpenAIChatModel` sends `ImageUrl` as a URL,
+downloads `AudioUrl` and `DocumentUrl` locally and sends bytes, and does not support
+`VideoUrl`. `AnthropicModel` accepts `ImageUrl` and PDF as `DocumentUrl`, but does not
+handle audio or video. `GoogleModel` on Google Cloud accepts all URL types.
+
+<Callout kind="warning">
+Before you build a pipeline around a specific input type, check the model's documentation
+to confirm it supports it. Sending a `VideoUrl` to a model that does not accept it raises
+an error rather than silently dropping it.
+</Callout>
+
+When a provider supports the URL in theory but cannot actually download the file (for
+example because of access restrictions), force the download on the Pydantic AI side with
+`force_download=True` on the URL object.
+
+```python
+from pydantic_ai import ImageUrl
+
+ImageUrl(url="https://example.com/image.png", force_download=True)
+```
+
+## Thinking, reasoning before the answer
+
+The second topic of this chapter is independent of multimodality. <Term definition="Thinking (reasoning) is the process by which a model works through a problem step by step before giving its final answer.">Thinking</Term>
+is the step-by-step reasoning a model performs before producing its final answer. The
+simplest way to enable it, working across many providers, is the `Thinking` capability.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking
+
+agent = Agent(
+    "anthropic:claude-opus-4-7",
+    capabilities=[Thinking(effort="high")],
+)
+```
+
+You can set the same thing through `model_settings`, supplying the value under the
+`thinking` key. Both routes reach the same place, but the capability reads more clearly.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent("anthropic:claude-opus-4-7", model_settings={"thinking": "high"})
+```
+
+## Effort levels
+
+The `effort` field on `Thinking` accepts a few kinds of value. You can enable thinking at
+the provider's default level, disable it, or pick a specific effort level. If a level is
+not supported by the model, Pydantic AI maps it to the closest available one.
+
+| `effort` value | Meaning |
+| --- | --- |
+| `True` | thinking at the provider's default level |
+| `False` | disabled, silently ignored on always-on models |
+| `"minimal"` | the lowest reasoning effort |
+| `"low"` | low effort |
+| `"medium"` | medium effort |
+| `"high"` | high effort |
+| `"xhigh"` | maximum, for example Claude Opus 4.7 and 4.8 |
+
+<Callout kind="note">
+The `Thinking` capability translates these levels into each provider's native format. For
+OpenAI it becomes `reasoning_effort`, for Anthropic adaptive thinking with an effort level,
+and for Gemini 3+ the `thinking_level` field. You do not need to know these details until
+you want fine tuning.
+</Callout>
+
+## ThinkingPart in the response
+
+When a model thinks, its reasoning comes back as separate message parts of type
+`ThinkingPart`, distinct from the final text. You can read them by walking the messages
+from the run. That lets you show the user a chain of thought or save it to logs without
+mixing it into the actual answer.
+
+<RunFlow
+  title="A run with thinking enabled"
+  nodes={[
+    { kind: "user", label: "Prompt", detail: "text plus optional image" },
+    { kind: "agent", label: "Agent", detail: "adds the thinking setting" },
+    { kind: "model", label: "Model", detail: "reasons, then answers" },
+    { kind: "output", label: "Result", detail: "ThinkingPart plus output" },
+  ]}
+/>
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking
+from pydantic_ai.messages import ThinkingPart
+
+agent = Agent("anthropic:claude-opus-4-7", capabilities=[Thinking(effort="medium")])
+
+result = agent.run_sync("What is 17 times 24, and how did you work it out?")
+for message in result.all_messages():
+    for part in message.parts:
+        if isinstance(part, ThinkingPart):
+            print("Reasoning:", part.content)
+
+print("Answer:", result.output)
+```
+
+For some providers, such as parts of the OpenAI-compatible ecosystem, raw reasoning lands
+not in `content` but in `provider_details['raw_content']`. This is deliberate: OpenAI
+advises that raw reasoning should not be shown directly to users.
+
+## Tuning per provider
+
+The `Thinking` capability is enough for most cases. When you need full control, you reach
+for a specific provider's settings. For Anthropic that is `anthropic_thinking`, for Google
+`google_thinking_config`, for Groq `groq_reasoning_format`. These settings take precedence
+when you supply them alongside the capability.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+
+model = GoogleModel("gemini-3.5-flash")
+settings = GoogleModelSettings(
+    google_thinking_config={"include_thoughts": True, "thinking_level": "MEDIUM"},
+)
+agent = Agent(model, model_settings=settings)
+```
+
+<Callout kind="tip">
+Start with `Thinking(effort="...")` and stay there as long as you can. Reach for native
+provider settings only when you need something the unified interface does not expose, such
+as interleaved thinking on Anthropic or a specific token budget on older models.
+</Callout>
+
+## What is next
+
+You can now pass images, audio, video, and documents, and enable and read back the model's
+reasoning. The two mechanisms combine naturally: you can send an image and ask the model to
+think through its answer. In the next chapter we move on to another topic from the guide.
+The runnable code for this chapter lives in `sandbox/18-multimodal-myslenie`.

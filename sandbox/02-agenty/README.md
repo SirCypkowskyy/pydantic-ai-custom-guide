@@ -1,18 +1,18 @@
-# 02 - Agenty
+# 02 - Agents
 
-Towarzyszy rozdziałowi [Agenty](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/agenty).
+Accompanies the [Agents](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/agenty) chapter.
 
-Pokazuje minimalnego agenta, dynamiczne instrukcje czytające zależności przez `RunContext`
-oraz różnicę między `run_sync` a `run`.
+Shows a minimal agent, dynamic instructions that read dependencies through `RunContext`,
+and the difference between `run_sync` and `run`.
 
-## Uruchomienie
+## Running
 
 ```bash
-# z katalogu sandbox/
+# from the sandbox/ directory
 uv run 02-agenty/main.py
 
 # smoke test
 uv run pytest 02-agenty/smoke_test.py
 ```
 
-Wymaga `OLLAMA_CLOUD_API_KEY` w pliku `.env` w katalogu głównym repozytorium.
+Requires `OLLAMA_CLOUD_API_KEY` in the `.env` file in the repository root.

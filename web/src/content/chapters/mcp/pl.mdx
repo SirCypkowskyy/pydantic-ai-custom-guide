@@ -156,6 +156,244 @@ bo widzisz logi podprocesu, a całość działa bez sieci. Po serwery zdalne si�
 narzędzie ma żyć osobno od Twojej aplikacji.
 </Callout>
 
+## Budowa własnego serwera MCP wokół agenta
+
+Do tej pory byłeś klientem. Teraz odwracamy role: to Twój kod jest serwerem MCP, a w środku
+narzędzia siedzi pełnoprawny agent Pydantic AI. Tak udostępniasz światu zdolność, którą sam
+zbudowałeś, w postaci zwykłego narzędzia MCP, z którego skorzysta dowolny klient.
+
+Najprościej zrobisz to z `FastMCP` z oficjalnego SDK MCP. Tworzysz serwer, dekorujesz funkcję
+przez `@server.tool()`, a w jej ciele wołasz agenta i zwracasz jego wynik.
+
+```python
+from mcp.server.fastmcp import FastMCP
+
+from pydantic_ai import Agent
+
+server = FastMCP("Pydantic AI Server")
+server_agent = Agent(
+    "anthropic:claude-haiku-4-5", instructions="zawsze odpowiadaj rymem"
+)
+
+
+@server.tool()
+async def poet(theme: str) -> str:
+    """Generator wierszy"""
+    r = await server_agent.run(f"napisz wiersz o temacie {theme}")
+    return r.output
+
+
+if __name__ == "__main__":
+    server.run()
+```
+
+Z perspektywy klienta to po prostu narzędzie `poet`. Klient nie wie, że pod spodem działa
+agent, model i instrukcje. Dla niego liczy się nazwa narzędzia, jego argumenty i zwracany
+tekst.
+
+<Callout kind="key">
+Serwer i klient to dwie różne role tego samego protokołu. W poprzednich sekcjach agent był
+klientem i sięgał po cudze narzędzia. Tutaj agent jest sercem serwera i to jego zdolności
+stają się narzędziem dla innych. Ten sam plik możesz uruchomić jako serwer stdio i podłączyć
+do niego klienta z pierwszej sekcji rozdziału.
+</Callout>
+
+## Sampling, czyli serwer pożycza model od klienta
+
+W przykładzie wyżej serwer miał własny model i własne klucze. Często nie chcesz tego: serwer
+publiczny wolałby, żeby to klient płacił za wywołania modelu, a serwer lokalny nie musiał
+trzymać żadnych poświadczeń. Do tego służy sampling. Serwer, zamiast łączyć się z modelem
+bezpośrednio, prosi klienta po protokole MCP o wykonanie wywołania modelu i odbiera gotową
+odpowiedź.
+
+Po stronie serwera używasz `MCPSamplingModel` jako modelu agenta i przekazujesz mu sesję z
+kontekstu narzędzia.
+
+```python
+from mcp.server.fastmcp import Context, FastMCP
+
+from pydantic_ai import Agent
+from pydantic_ai.models.mcp_sampling import MCPSamplingModel
+
+server = FastMCP("Pydantic AI Server z samplingiem")
+server_agent = Agent(instructions="zawsze odpowiadaj rymem")
+
+
+@server.tool()
+async def poet(ctx: Context, theme: str) -> str:
+    """Generator wierszy"""
+    r = await server_agent.run(
+        f"napisz wiersz o temacie {theme}",
+        model=MCPSamplingModel(session=ctx.session),
+    )
+    return r.output
+
+
+if __name__ == "__main__":
+    server.run()
+```
+
+Po stronie klienta sampling jest obsługiwany automatycznie, gdy klientem jest agent Pydantic
+AI. Wystarczy, że serwer ma ustawiony `sampling_model`. Najwygodniej zrobisz to wywołaniem
+`agent.set_mcp_sampling_model()`, które ustawi model agenta jako model samplingu na każdym
+podłączonym serwerze MCP.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+
+server = MCPServerStdio("python", args=["generate_svg.py"])
+agent = Agent("openai:gpt-5.2", toolsets=[server])
+
+
+async def main() -> None:
+    async with agent:
+        agent.set_mcp_sampling_model()
+        result = await agent.run("Stwórz obrazek robota w stylu punk.")
+        print(result.output)
+```
+
+<RunFlow
+  title="Sampling: serwer woła z powrotem model klienta"
+  nodes={[
+    { kind: "user", label: "Zapytanie", detail: "tekst od użytkownika" },
+    { kind: "agent", label: "Agent (klient)", detail: "wywołuje narzędzie MCP" },
+    { kind: "tool", label: "Serwer MCP", detail: "potrzebuje modelu" },
+    { kind: "model", label: "Model klienta", detail: "sampling przez klienta" },
+    { kind: "output", label: "Wynik", detail: "result.output" },
+  ]}
+/>
+
+Sampling możesz też wyłączyć, ustawiając `allow_sampling=False` przy tworzeniu referencji do
+serwera. Wtedy klient odmówi serwerowi wywołań modelu, nawet jeśli ten o nie poprosi.
+
+## Klient FastMCP
+
+`FastMCP` to wyższego poziomu framework do MCP, który dokłada rzeczy spoza samej specyfikacji,
+jak transformacja narzędzi czy OAuth. Pydantic AI udostępnia osobny toolset, `FastMCPToolset`,
+który łączy się z serwerami przez klienta FastMCP. To alternatywa dla klas `MCPServer*` z
+poprzednich sekcji.
+
+Jeśli serwer FastMCP masz w tym samym kodzie co agenta, możesz zbudować toolset wprost z
+obiektu serwera i oszczędzić podróż po sieci.
+
+```python
+from fastmcp import FastMCP
+
+from pydantic_ai import Agent
+from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+fastmcp_server = FastMCP("my_server")
+
+
+@fastmcp_server.tool()
+async def add(a: int, b: int) -> int:
+    return a + b
+
+
+toolset = FastMCPToolset(fastmcp_server)
+agent = Agent("openai:gpt-5.2", toolsets=[toolset])
+
+
+async def main() -> None:
+    result = await agent.run("Ile jest 7 plus 5?")
+    print(result.output)
+    #> Odpowiedź to 12.
+```
+
+`FastMCPToolset` przyjmuje też sam adres serwera, na przykład `FastMCPToolset("http://localhost:8000/mcp")`,
+ścieżkę do skryptu albo konfigurację JSON.
+
+<Callout kind="warning">
+`FastMCPToolset` nie obsługuje na razie samplingu ani elicytacji. Jeśli potrzebujesz tych
+mechanizmów, zostań przy standardowych klasach `MCPServerStdio`, `MCPServerStreamableHTTP`
+albo `MCPServerSSE`.
+</Callout>
+
+## Wiele serwerów z pliku konfiguracyjnego i elicytacja
+
+Zamiast tworzyć każdy serwer ręcznie w kodzie, możesz opisać je w pliku JSON i wczytać
+funkcją `load_mcp_servers()`. Przydaje się, gdy serwerów jest kilka albo gdy chcesz nimi
+sterować bez ruszania kodu.
+
+```json
+{
+  "mcpServers": {
+    "python-runner": {
+      "command": "uv",
+      "args": ["run", "mcp-run-python", "stdio"]
+    },
+    "weather": {
+      "command": "python",
+      "args": ["mcp_server.py"]
+    },
+    "weather-api": {
+      "url": "http://localhost:3001/sse"
+    },
+    "calculator": {
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+Wpisy z polem `command` to serwery stdio. Wpisy z polem `url` to serwery HTTP, przy czym
+adres zakończony na `/sse` jest traktowany jako starszy transport `MCPServerSSE`, a każdy
+inny jako Streamable HTTP. Konfiguracja wspiera też podstawianie zmiennych środowiskowych
+przez `${VAR}` oraz `${VAR:-domyslna}`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.mcp import load_mcp_servers
+
+servers = load_mcp_servers("mcp_config.json")
+agent = Agent("openai:gpt-5.2", toolsets=servers)
+
+
+async def main() -> None:
+    async with agent:
+        result = await agent.run("Ile jest 7 plus 5?")
+        print(result.output)
+```
+
+Na koniec elicytacja. To mechanizm, w którym serwer w trakcie działania narzędzia prosi
+klienta o brakujące dane, zamiast wymagać wszystkiego z góry. Model mówi w praktyce
+"poczekaj, muszę najpierw poznać X". Po stronie klienta podłączasz `elicitation_callback`,
+czyli funkcję, która dostaje prośbę serwera, pyta użytkownika i odsyła wynik.
+
+```python
+from typing import Any
+
+from mcp.client.session import ClientSession
+from mcp.shared.context import RequestContext
+from mcp.types import ElicitRequestParams, ElicitResult
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+
+
+async def handle_elicitation(
+    context: RequestContext[ClientSession, Any, Any],
+    params: ElicitRequestParams,
+) -> ElicitResult:
+    print(f"\n{params.message}")
+    response = input("Odpowiedz: ")
+    return ElicitResult(action="accept", content={"response": response})
+
+
+server = MCPServerStdio(
+    "python", args=["restaurant_server.py"], elicitation_callback=handle_elicitation
+)
+agent = Agent("openai:gpt-5.2", toolsets=[server])
+```
+
+<Callout kind="note">
+Elicytacja działa tylko dla płaskich obiektów z polami typu tekst, liczba, wartość logiczna
+albo enum. Callback może zwrócić `action="accept"` z danymi, `action="decline"`, gdy
+użytkownik odmawia, albo `action="cancel"`, gdy przerywa. Nigdy nie proś użytkownika o dane
+wrażliwe tą drogą.
+</Callout>
+
 ## Co dalej
 
 Wiesz już, jak podłączyć agenta do serwera MCP przez stdio i przez HTTP, dlaczego cykl

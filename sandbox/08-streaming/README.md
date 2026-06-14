@@ -1,24 +1,24 @@
 # 08 - Streaming
 
-Towarzyszy rozdziałowi [Streaming](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/streaming).
+Accompanies the [Streaming](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/streaming) chapter.
 
-Pokazuje trzy sposoby strumieniowania odpowiedzi:
+Shows three ways to stream a response:
 
-- strumieniowanie tekstu token po tokenie przez `stream_text(delta=True)`,
-- strumieniowanie częściowego, ustrukturyzowanego wyniku przez `stream_output()`,
-- strumieniowanie surowych zdarzeń przebiegu przez `run_stream_events()`.
+- streaming text token by token through `stream_text(delta=True)`,
+- streaming a partial, structured result through `stream_output()`,
+- streaming raw run events through `run_stream_events()`.
 
-Strumieniowanie działa wyłącznie w kontekście asynchronicznym, dlatego cały
-przykład jest uruchamiany przez jedno `asyncio.run`.
+Streaming works only in an asynchronous context, which is why the whole
+example is run through a single `asyncio.run`.
 
-## Uruchomienie
+## Running
 
 ```bash
-# z katalogu sandbox/
+# from the sandbox/ directory
 uv run 08-streaming/main.py
 
 # smoke test
 uv run pytest 08-streaming/smoke_test.py
 ```
 
-Wymaga `OLLAMA_CLOUD_API_KEY` w pliku `.env` w katalogu głównym repozytorium.
+Requires `OLLAMA_CLOUD_API_KEY` in the `.env` file in the repository root.

@@ -1,21 +1,21 @@
-# 03 - Modele
+# 03 - Models
 
-Towarzyszy rozdziałowi [Modele i dostawcy](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/modele).
+Accompanies the [Models and providers](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/modele) chapter.
 
-Pokazuje, że model za agentem to po prostu kolejny element konfiguracji:
+Shows that the model behind an agent is simply another piece of configuration:
 
-- dostawca zgodny z OpenAI (Ollama Cloud) zbudowany raz we współdzielonym helperze,
-- ustawienia modelu (`ModelSettings`) takie jak `temperature` czy `max_tokens`,
-- `FallbackModel`, który próbuje kolejnego modelu, gdy pierwszy zawiedzie.
+- an OpenAI-compatible provider (Ollama Cloud) built once in a shared helper,
+- model settings (`ModelSettings`) such as `temperature` or `max_tokens`,
+- `FallbackModel`, which tries the next model when the first one fails.
 
-## Uruchomienie
+## Running
 
 ```bash
-# z katalogu sandbox/
+# from the sandbox/ directory
 uv run 03-modele/main.py
 
 # smoke test
 uv run pytest 03-modele/smoke_test.py
 ```
 
-Wymaga `OLLAMA_CLOUD_API_KEY` w pliku `.env` w katalogu głównym repozytorium.
+Requires `OLLAMA_CLOUD_API_KEY` in the `.env` file in the repository root.

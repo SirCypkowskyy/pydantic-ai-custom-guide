@@ -1,31 +1,31 @@
-# 15 - Integracja z FastAPI
+# 15 - FastAPI integration
 
-Towarzyszy rozdziałowi [Integracja z FastAPI](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/fastapi-integracja).
+Accompanies the [FastAPI integration](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/fastapi-integracja) chapter.
 
-Pokazuje, jak wystawić agenta Pydantic AI przez HTTP:
+Shows how to expose a Pydantic AI agent over HTTP:
 
-- endpoint `/ask` waliduje ciało żądania modelem Pydantic i zwraca ustrukturyzowaną,
-  typowaną odpowiedź (`output_type`),
-- wstrzykiwanie zależności: FastAPI buduje `Deps` dla każdego żądania i przekazuje je
-  agentowi przez `RunContext`,
-- endpoint `/stream` przesyła fragmenty tekstu z `run_stream` do klienta jako
-  Server-Sent Events przez `StreamingResponse`.
+- the `/ask` endpoint validates the request body with a Pydantic model and returns a structured,
+  typed response (`output_type`),
+- dependency injection: FastAPI builds `Deps` for each request and passes them
+  to the agent through `RunContext`,
+- the `/stream` endpoint streams text chunks from `run_stream` to the client as
+  Server-Sent Events through `StreamingResponse`.
 
-## Uruchomienie
+## Running
 
 ```bash
-# z katalogu sandbox/
+# from the sandbox/ directory
 
-# wariant 1: uruchom serwer i samodzielnie odpytaj endpointy
-uv run uvicorn main:app --reload  # z katalogu 15-fastapi-integracja/
+# option 1: start the server and query the endpoints yourself
+uv run uvicorn main:app --reload  # from the 15-fastapi-integracja/ directory
 
-# wariant 2: skrypt sam startuje serwer i wysyła przykładowe żądania
+# option 2: the script starts the server itself and sends example requests
 uv run 15-fastapi-integracja/main.py
 
-# smoke test (działa offline, bez klucza, dzięki TestModel)
+# smoke test (works offline, without a key, thanks to TestModel)
 uv run pytest 15-fastapi-integracja/smoke_test.py
 ```
 
-Skrypt `main.py` oraz serwer wymagają `OLLAMA_CLOUD_API_KEY` w pliku `.env`
-w katalogu głównym repozytorium. Smoke test działa bez klucza, ponieważ podmienia
-model na `TestModel`.
+The `main.py` script and the server require `OLLAMA_CLOUD_API_KEY` in the `.env` file
+in the repository root. The smoke test works without a key because it swaps
+the model out for `TestModel`.

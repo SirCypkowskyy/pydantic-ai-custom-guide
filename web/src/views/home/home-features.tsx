@@ -1,5 +1,8 @@
 import { Link } from "@tanstack/react-router";
-import { BookOpen, FlaskConical, Languages, MessageSquare, Trophy } from "lucide-react";
+import { BookOpen, FlaskConical, Languages, Trophy } from "lucide-react";
+import type { ComponentType } from "react";
+import { AnimateIcon } from "@/components/animate-ui/icons/icon";
+import { MessageSquare } from "@/components/animate-ui/icons/message-square";
 import { Card } from "@/components/ui/card";
 import { useLanguage } from "@/hooks/use-language";
 import { site } from "@/lib/site";
@@ -40,43 +43,51 @@ export function HomeFeatures() {
             </a>
           </Card>
 
-          {[
-            {
-              icon: Languages,
-              title: pl ? "Po polsku i angielsku" : "Polish and English",
-              body: pl
-                ? "Przełącz język jednym kliknięciem. Każdy rozdział istnieje w obu wersjach."
-                : "Switch language with one click. Every chapter exists in both versions.",
-            },
-            {
-              icon: Trophy,
-              title: pl ? "Quizy i postępy" : "Quizzes and progress",
-              body: pl
-                ? "Krótki quiz kończy rozdział, a Twój wynik i postępy zapisują się lokalnie."
-                : "A short quiz closes each chapter; your score and progress are saved locally.",
-            },
-            {
-              icon: BookOpen,
-              title: pl ? "Źródła w dokumentacji" : "Linked source docs",
-              body: pl
-                ? "Każdy rozdział linkuje dokładne strony dokumentacji, na których się opiera."
-                : "Each chapter links the exact documentation pages it is based on.",
-            },
-            {
-              icon: MessageSquare,
-              title: pl ? "Komentarze pod rozdziałem" : "Comments per chapter",
-              body: pl
-                ? "Pytania i dyskusja działają przez giscus i GitHub Discussions."
-                : "Questions and discussion run on giscus and GitHub Discussions.",
-            },
-          ].map((feature) => (
-            <Card key={feature.title} className="flex flex-col gap-2.5 p-6">
-              <feature.icon className="size-5 text-primary" />
-              <h3 className="font-display text-base font-semibold tracking-tight">
-                {feature.title}
-              </h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">{feature.body}</p>
-            </Card>
+          {(
+            [
+              {
+                icon: Languages,
+                title: pl ? "Po polsku i angielsku" : "Polish and English",
+                body: pl
+                  ? "Przełącz język jednym kliknięciem. Każdy rozdział istnieje w obu wersjach."
+                  : "Switch language with one click. Every chapter exists in both versions.",
+              },
+              {
+                icon: Trophy,
+                title: pl ? "Quizy i postępy" : "Quizzes and progress",
+                body: pl
+                  ? "Krótki quiz kończy rozdział, a Twój wynik i postępy zapisują się lokalnie."
+                  : "A short quiz closes each chapter; your score and progress are saved locally.",
+              },
+              {
+                icon: BookOpen,
+                title: pl ? "Źródła w dokumentacji" : "Linked source docs",
+                body: pl
+                  ? "Każdy rozdział linkuje dokładne strony dokumentacji, na których się opiera."
+                  : "Each chapter links the exact documentation pages it is based on.",
+              },
+              {
+                icon: MessageSquare,
+                title: pl ? "Komentarze pod rozdziałem" : "Comments per chapter",
+                body: pl
+                  ? "Pytania i dyskusja działają przez giscus i GitHub Discussions."
+                  : "Questions and discussion run on giscus and GitHub Discussions.",
+              },
+            ] satisfies {
+              icon: ComponentType<{ className?: string }>;
+              title: string;
+              body: string;
+            }[]
+          ).map((feature) => (
+            <AnimateIcon key={feature.title} animateOnHover asChild>
+              <Card className="flex flex-col gap-2.5 p-6">
+                <feature.icon className="size-5 text-primary" />
+                <h3 className="font-display text-base font-semibold tracking-tight">
+                  {feature.title}
+                </h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">{feature.body}</p>
+              </Card>
+            </AnimateIcon>
           ))}
         </div>
 

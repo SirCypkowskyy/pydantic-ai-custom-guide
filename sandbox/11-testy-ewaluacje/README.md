@@ -1,24 +1,24 @@
-# 11 - Testy i ewaluacje
+# 11 - Tests and evaluations
 
-Towarzyszy rozdziałowi [Testy i ewaluacje](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/testy-i-ewaluacje).
+Accompanies the [Tests and evaluations](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/testy-i-ewaluacje) chapter.
 
-Pokazuje, jak testować agenta bez sieci: `TestModel` generuje wynik ze schematu wyjścia,
-`FunctionModel` pozwala precyzyjnie sterować odpowiedzią modelu i wywoływanymi narzędziami,
-a `agent.override` podmienia model w trakcie testu. Druga część to ewaluacje za pomocą
-`pydantic_evals` (`Dataset`, `Case`, własny `Evaluator`), które punktują ustrukturyzowane wyjście.
+Shows how to test an agent without the network: `TestModel` generates a result from the output schema,
+`FunctionModel` lets you precisely control the model's response and the tools it calls,
+and `agent.override` swaps out the model during the test. The second part is evaluations using
+`pydantic_evals` (`Dataset`, `Case`, a custom `Evaluator`), which score the structured output.
 
-`main.py` uruchamia agenta na prawdziwym modelu (Ollama Cloud) i puszcza ewaluacje.
-`smoke_test.py` działa w pełni offline, bez klucza API.
+`main.py` runs the agent on a real model (Ollama Cloud) and runs the evaluations.
+`smoke_test.py` works fully offline, without an API key.
 
-## Uruchomienie
+## Running
 
 ```bash
-# z katalogu sandbox/
+# from the sandbox/ directory
 uv run 11-testy-ewaluacje/main.py
 
-# smoke test (offline, nie wymaga klucza)
+# smoke test (offline, does not require a key)
 uv run pytest 11-testy-ewaluacje/smoke_test.py
 ```
 
-`main.py` wymaga `OLLAMA_CLOUD_API_KEY` w pliku `.env` w katalogu głównym repozytorium.
-Same testy działają bez klucza dzięki `TestModel` i `FunctionModel`.
+`main.py` requires `OLLAMA_CLOUD_API_KEY` in the `.env` file in the repository root.
+The tests themselves work without a key thanks to `TestModel` and `FunctionModel`.

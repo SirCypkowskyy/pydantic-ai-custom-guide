@@ -34,6 +34,7 @@ export const parts: CoursePart[] = [
   { id: "flow", title: { pl: "Przepływ i komunikacja", en: "Flow & communication" } },
   { id: "production", title: { pl: "Produkcja", en: "Production" } },
   { id: "ecosystem", title: { pl: "Ekosystem Pydantic", en: "Pydantic ecosystem" } },
+  { id: "advanced", title: { pl: "Zaawansowane", en: "Advanced" } },
   { id: "capstone", title: { pl: "Projekt końcowy", en: "Capstone" } },
 ];
 
@@ -65,7 +66,7 @@ export const chapters: Chapter[] = [
     difficulty: "intro",
     minutes: 16,
     partId: "basics",
-    title: { pl: "Agenty", en: "Agents" },
+    title: { pl: "Agenci", en: "Agents" },
     summary: {
       pl: "Czym jest Agent, jak go konfigurować, system prompty, uruchomienia sync, async i strumieniowe.",
       en: "What an Agent is, how to configure it, system prompts, and sync, async, and streaming runs.",
@@ -287,6 +288,78 @@ export const chapters: Chapter[] = [
   },
   {
     order: 16,
+    slug: "capabilities-hooki",
+    icon: "Puzzle",
+    difficulty: "advanced",
+    minutes: 26,
+    partId: "advanced",
+    title: { pl: "Capabilities i hooki", en: "Capabilities & hooks" },
+    summary: {
+      pl: "Główny mechanizm rozszerzeń Pydantic AI: capabilities oraz hooki cyklu życia uruchomienia.",
+      en: "The primary extension mechanism in Pydantic AI: capabilities and run lifecycle hooks.",
+    },
+    docs: [
+      { label: "Capabilities", url: `${AI}/core-concepts/capabilities` },
+      { label: "Hooks", url: `${AI}/core-concepts/hooks` },
+      { label: "Extensibility", url: `${AI}/guides/extensibility` },
+    ],
+    sandbox: "16-capabilities-hooki",
+  },
+  {
+    order: 17,
+    slug: "zaawansowane-narzedzia",
+    icon: "PencilRuler",
+    difficulty: "advanced",
+    minutes: 24,
+    partId: "advanced",
+    title: { pl: "Zaawansowane narzędzia i toolsety", en: "Advanced tools & toolsets" },
+    summary: {
+      pl: "Dynamiczne narzędzia, wybór narzędzia, bogate zwroty, algebra toolsetów oraz narzędzia natywne i gotowe.",
+      en: "Dynamic tools, tool choice, rich returns, the toolset algebra, plus native and common tools.",
+    },
+    docs: [
+      { label: "Advanced tools", url: `${AI}/tools-toolsets/tools-advanced` },
+      { label: "Toolsets", url: `${AI}/tools-toolsets/toolsets` },
+      { label: "Native tools", url: `${AI}/tools-toolsets/native-tools` },
+      { label: "Common tools", url: `${AI}/tools-toolsets/common-tools` },
+    ],
+    sandbox: "17-zaawansowane-narzedzia",
+  },
+  {
+    order: 18,
+    slug: "multimodal-myslenie",
+    icon: "Image",
+    difficulty: "advanced",
+    minutes: 20,
+    partId: "advanced",
+    title: { pl: "Multimodal i myślenie", en: "Multimodal input & thinking" },
+    summary: {
+      pl: "Obrazy, audio, wideo i dokumenty jako wejście oraz tryb rozumowania (thinking) w modelach.",
+      en: "Images, audio, video, and documents as input, plus reasoning (thinking) in models.",
+    },
+    docs: [
+      { label: "Input", url: `${AI}/advanced-features/input` },
+      { label: "Thinking", url: `${AI}/advanced-features/thinking` },
+    ],
+    sandbox: "18-multimodal-myslenie",
+  },
+  {
+    order: 19,
+    slug: "embeddingi-rag",
+    icon: "Database",
+    difficulty: "advanced",
+    minutes: 22,
+    partId: "advanced",
+    title: { pl: "Embeddingi i RAG", en: "Embeddings & RAG" },
+    summary: {
+      pl: "Embeddingi, wyszukiwanie wektorowe i budowa prostego RAG z reranking.",
+      en: "Embeddings, vector retrieval, and building a simple RAG with reranking.",
+    },
+    docs: [{ label: "Embeddings", url: `${AI}/guides/embeddings` }],
+    sandbox: "19-embeddingi-rag",
+  },
+  {
+    order: 20,
     slug: "asystent-jak-claude",
     icon: "Bot",
     difficulty: "advanced",
@@ -303,7 +376,7 @@ export const chapters: Chapter[] = [
       { label: "MCP", url: `${AI}/mcp/client` },
       { label: "Toolsets", url: `${AI}/tools-toolsets/toolsets` },
     ],
-    sandbox: "16-asystent-jak-claude",
+    sandbox: "20-asystent-jak-claude",
   },
 ];
 

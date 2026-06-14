@@ -1,0 +1,305 @@
+Until now we passed every piece of agent behavior as a separate constructor argument: instructions
+here, model settings there, a toolset somewhere else. Pydantic AI has a better idea. A capability is
+a single, reusable unit of agent behavior that you plug into an agent through the `capabilities`
+parameter. Hooks, in turn, let you step into the flow of a run and observe or modify it, with no
+subclassing and no rewriting of the agent loop.
+
+This chapter covers both ideas. A capability is a wrapper around related behavior, and hooks are
+attachment points in the run lifecycle. Together they are the primary extension point of the
+framework.
+
+## What a capability is
+
+A <Term definition="A capability is a reusable, composable unit of agent behavior. You plug it in through the capabilities parameter and it can provide tools, hooks, instructions, and model settings.">capability</Term>
+is a bundle. Instead of scattering related settings across several arguments, you collect them into
+one object and pass them as a list to the `capabilities` parameter. A single bundle can provide any
+combination of four things:
+
+- tools, the functions the model can call, via a toolset or native tools,
+- lifecycle hooks that intercept and modify model requests and tool calls,
+- instructions, static or dynamic, added to the agent's instructions,
+- model settings, fixed or per-step.
+
+<Callout kind="key">
+A capability is the primary extension point of Pydantic AI. A memory system, a guardrail, a cost
+tracker, an approval workflow: each time the right abstraction is a capability. That is what lets you
+plug one bundle of behavior into many agents without copying code.
+</Callout>
+
+## Native capabilities
+
+Pydantic AI ships with a set of built-in capabilities that cover common needs. You pass them as a
+list to `capabilities` exactly like your own.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking, WebSearch
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="You are a research assistant. Be thorough and cite sources.",
+    capabilities=[
+        Thinking(effort="high"),
+        WebSearch(local="duckduckgo"),
+    ],
+)
+```
+
+`Thinking` enables the model's reasoning at a chosen effort level and behaves the same across
+providers. `WebSearch` gives web search. Where the model supports it natively, native search is
+used. Where it does not, a local fallback kicks in, here DuckDuckGo. `WebFetch`, `ImageGeneration`,
+and `MCP` follow the same approach: one bundle that picks the best path for the active model.
+
+| Capability | What it provides |
+| --- | --- |
+| `Thinking` | model reasoning at a chosen effort level |
+| `WebSearch` | web search, native or local fallback |
+| `WebFetch` | fetching the content behind a URL |
+| `MCP` | connecting an MCP server, native or direct |
+| `ToolSearch` | discovery of deferred tools in large toolsets |
+| `Hooks` | decorator-based lifecycle hook registration |
+
+<Callout kind="note">
+Instructions and model settings are configured directly through the `instructions` and
+`model_settings` parameters. Capabilities are for behavior that goes beyond simple configuration:
+tools, lifecycle hooks, and custom extensions.
+</Callout>
+
+## On-demand capabilities
+
+An agent that serves many workflows normally sends the instructions and tool schemas of every
+workflow on every turn, even though most requests need only one. The cost grows with each workflow
+you add: more input tokens, and worse tool selection once the number of tools passes a few dozen.
+
+The fix is <Term definition="A capability marked defer_loading=True collapses to a single catalog line. The model loads it only when it needs it, by calling the load_capability tool.">on-demand loading</Term>.
+Mark a bundle with `defer_loading=True`, give it a stable `id`, and it collapses to a single line in
+the catalog: its `id` plus an optional `description`. The model loads it only when it decides it is
+needed.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Capability
+
+refunds = Capability(
+    id="refunds",
+    description="Use for refund status, refund eligibility, or processing a refund.",
+    instructions="Always confirm the order ID before issuing a refund.",
+    defer_loading=True,
+)
+
+
+@refunds.tool
+def refund_status(ctx: RunContext[None], order_id: str) -> str:
+    """Look up the refund status for an order."""
+    return f"Order {order_id}: refund issued on 2026-05-01."
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="You are a customer support assistant.",
+    capabilities=[refunds],
+)
+```
+
+On the first turn the refunds workflow is collapsed to a catalog entry. The model does not see its
+instructions, and `refund_status` is not callable yet. The framework adds the managed
+`load_capability` tool and appends the catalog to the instructions.
+
+<RunFlow
+  title="Loading a capability on demand within a single run"
+  nodes={[
+    { kind: "user", label: "Prompt", detail: "where is my refund" },
+    { kind: "model", label: "Request 1", detail: "calls load_capability" },
+    { kind: "tool", label: "load_capability", detail: "registers tools and instructions" },
+    { kind: "model", label: "Request 2", detail: "calls refund_status" },
+    { kind: "output", label: "Output", detail: "reply to the customer" },
+  ]}
+/>
+
+Loading activates the whole bundle, not just the instructions. The capability's function tools, model
+settings, and lifecycle hooks come live together. Once loaded, a bundle stays active for the rest of
+the run.
+
+<Callout kind="warning">
+An on-demand capability requires a stable, explicit `id`. The loaded state of bundles lives in the
+message history, not in the agent. When you resume a conversation from a database, Pydantic AI
+reconstructs the loaded set from the `load_capability` call/return pairs in history. Changing the
+`id` would silently break that matching.
+</Callout>
+
+## A custom capability
+
+When you need more than instructions and tools, you subclass `AbstractCapability`. You override only
+the methods you need. The configuration methods are called at agent construction and have
+predictable names.
+
+| Method | Returns | Purpose |
+| --- | --- | --- |
+| `get_toolset()` | a toolset or `None` | function tools to register |
+| `get_native_tools()` | a sequence of native tools | provider native tools |
+| `get_instructions()` | instructions or `None` | static text or a callable with `RunContext` |
+| `get_model_settings()` | model settings or `None` | a dict or a callable for per-step settings |
+
+The capability below combines instructions, a custom toolset, and raised reasoning into one object.
+This is exactly the case where `Capability` is no longer enough.
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, ModelSettings, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.toolsets import AgentToolset, FunctionToolset
+
+security_tools = FunctionToolset()
+
+
+@security_tools.tool
+def revoke_sessions(ctx: RunContext[None], account_id: str) -> str:
+    """Revoke all active sessions for an account."""
+    return f"Revoked sessions for {account_id}."
+
+
+@dataclass
+class AccountSecurity(AbstractCapability[None]):
+    id: str = "account-security"
+    description: str = "Use for suspicious logins or account takeover."
+    defer_loading: bool = True
+
+    def get_instructions(self) -> str:
+        return "Confirm the customer identity before revoking sessions."
+
+    def get_toolset(self) -> AgentToolset[None]:
+        return security_tools
+
+    def get_model_settings(self) -> ModelSettings:
+        return ModelSettings(extra_body={"reasoning_effort": "high"})
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="You are a support agent for a store.",
+    capabilities=[AccountSecurity()],
+)
+```
+
+Until the model loads `account-security`, it sees neither the instructions, nor the `revoke_sessions`
+tool, nor the raised reasoning effort. Loading activates all three at once.
+
+## The hooks system
+
+Hooks let you step into the flow of a run at every stage: model requests, tool calls, streaming
+events. The simplest path is the `Hooks` capability. You create an instance, register hooks through
+the `@hooks.on.*` decorators, and pass it to the agent. No subclassing.
+
+```python
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks
+
+hooks = Hooks()
+
+
+@hooks.on.before_model_request
+async def log_request(
+    ctx: RunContext[None], request_context: ModelRequestContext
+) -> ModelRequestContext:
+    print(f"Sending {len(request_context.messages)} messages to the model")
+    return request_context
+
+
+agent = Agent("openai:gpt-5.2", capabilities=[hooks])
+result = agent.run_sync("Hello!")
+print(result.output)
+```
+
+The `hooks.on` namespace exposes a decorator method for every lifecycle point. Multiple hooks on the
+same event fire in registration order. Hooks can be synchronous or asynchronous.
+
+## The lifecycle you hook into
+
+A capability has five groups of attachment points, each with up to four variants. The shape is
+constant, so once you remember the pattern you know the whole family.
+
+- `before_*` fires before the action and can modify the input,
+- `after_*` fires after a successful action and can modify the result,
+- `wrap_*` gives full middleware control: it receives a `handler` and decides whether and how to call it,
+- `*_error` fires on an error and can observe, transform, or suppress it.
+
+<Mermaid
+  caption="Lifecycle hooks around a single run"
+  chart={`flowchart TD
+    R[Run start] --> BR[before_run]
+    BR --> MR[before_model_request]
+    MR --> M[Model]
+    M --> TE[before_tool_execute]
+    TE --> T[Tool]
+    T --> AR[after_run]
+    AR --> E[Run end]`}
+/>
+
+Run hooks fire once per run. `before_run` observes the start, `after_run` can modify the final
+result, and `wrap_run` wraps the entire run and lets you catch an error and return a recovery result.
+Model request hooks surround each LLM call. The `ModelRequestContext` object bundles `model`,
+`messages`, `model_settings`, and the request parameters.
+
+## The tool execution hook
+
+Tool hooks fire only for function tools. The `tools` parameter lets you target specific tools by
+name, which is handy for auditing sensitive operations.
+
+```python
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
+from pydantic_ai.messages import ToolCallPart
+
+hooks = Hooks()
+call_log: list[str] = []
+
+
+@hooks.on.before_tool_execute(tools=["send_email"])
+async def audit(
+    ctx: RunContext[None],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: ValidatedToolArgs,
+) -> ValidatedToolArgs:
+    call_log.append(f"audit: {call.tool_name}")
+    return args
+
+
+agent = Agent("openai:gpt-5.2", capabilities=[hooks])
+
+
+@agent.tool_plain
+def send_email(to: str) -> str:
+    return f"sent to {to}"
+
+
+result = agent.run_sync("Send an email to test@example.com")
+print(call_log)
+#> ['audit: send_email']
+```
+
+The hook receives `call` with the call data, `tool_def` with the tool definition, and `args` with
+the validated arguments. Returning `args` passes the call through. Every hook also takes an optional
+`timeout` in seconds. Exceeding it raises `HookTimeoutError`.
+
+<Callout kind="tip">
+A hook can raise `ModelRetry` to ask the model to try again with a custom message. This is the same
+mechanism used in tool functions and output validators. It turns lightweight validation in a hook
+into clear feedback for the model.
+</Callout>
+
+## When Hooks, when AbstractCapability
+
+`Hooks` is the choice for application-level concerns: logging, metrics, lightweight validation,
+one-off interceptors. When the behavior should be reusable and combines hooks with tools,
+instructions, or model settings, subclass `AbstractCapability`. The first is for quick, stateless
+attachment points, the second for full, packageable bundles shared across agents.
+
+## What is next
+
+You now have the two most important extension points of Pydantic AI: capabilities as bundles of
+behavior, and hooks as attachment points in the lifecycle. In the coming chapters we assemble them
+into concrete patterns such as guardrails and approval workflows. The runnable code for this chapter
+lives in `sandbox/16-capabilities-hooki`.

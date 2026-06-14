@@ -167,6 +167,236 @@ Poniższy diagram podsumowuje, jak zdecydować, którą drogą podłączyć mode
 walidacją wyniku, bo to nie są problemy dostawcy.
 </Callout>
 
+## Ponawianie żądań HTTP z tenacity
+
+`FallbackModel` i `ModelRetry` działają na poziomie agenta, ale czasem chcesz ponowić samo
+żądanie HTTP, zanim cokolwiek dotrze do logiki agenta. Typowy przypadek to limit zapytań
+(status 429) albo chwilowy błąd serwera (502, 503, 504). Pydantic AI udostępnia do tego
+transport zbudowany na bibliotece [tenacity](https://github.com/jd/tenacity), który podpinasz
+pod klienta `httpx`. To zupełnie inny mechanizm niż `ModelRetry`, który prosi model o nową
+próbę po nieudanej walidacji wyniku.
+
+Transport instalujesz przez grupę zależności `retries`:
+
+```bash
+uv add 'pydantic-ai-slim[retries]'
+```
+
+`AsyncTenacityTransport` przyjmuje `RetryConfig` (te same opcje co dekorator `@retry` z
+tenacity) oraz opcjonalny `validate_response`, który zamienia złe statusy HTTP na wyjątki do
+ponowienia. Funkcja `wait_retry_after` jest tu kluczowa: czyta nagłówek `Retry-After` z
+odpowiedzi 429, a gdy go nie ma, sięga po strategię zapasową, na przykład `wait_exponential`.
+
+```python
+from httpx import AsyncClient, HTTPStatusError
+from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
+
+
+def should_retry_status(response):
+    # Zamień statusy nadające się do ponowienia na HTTPStatusError
+    if response.status_code in (429, 502, 503, 504):
+        response.raise_for_status()
+
+
+transport = AsyncTenacityTransport(
+    config=RetryConfig(
+        retry=retry_if_exception_type((HTTPStatusError, ConnectionError)),
+        # Najpierw uszanuj nagłówek Retry-After, w razie braku wykładnicze odczekanie
+        wait=wait_retry_after(
+            fallback_strategy=wait_exponential(multiplier=1, max=60),
+            max_wait=300,
+        ),
+        stop=stop_after_attempt(5),
+        reraise=True,  # po wyczerpaniu prób podnieś ostatni wyjątek
+    ),
+    validate_response=should_retry_status,
+)
+
+client = AsyncClient(transport=transport)
+model = OpenAIChatModel("gpt-5.2", provider=OpenAIProvider(http_client=client))
+agent = Agent(model)
+```
+
+Bez `validate_response` ponawiane są tylko błędy sieci i timeouty, bo httpx nie traktuje
+statusu 4xx/5xx jako wyjątku. Walidator z `raise_for_status()` sprawia, że złe statusy też
+trafiają do tenacity.
+
+<Callout kind="note">
+`reraise=True` jest tu ważne. Bez tego po wyczerpaniu prób dostaniesz `RetryError` z tenacity
+zamiast oryginalnego błędu HTTP. Ustaw ten sam transport na kliencie dowolnego dostawcy, który
+przyjmuje `http_client`, w tym na endpoincie zgodnym z OpenAI.
+</Callout>
+
+## Pydantic AI Gateway
+
+Gateway to jeden punkt wejścia do wielu dostawców, zarządzany przez Pydantic Logfire. Zamiast
+trzymać osobne klucze do OpenAI, Anthropic czy Google, używasz jednego klucza Gateway i
+zmieniasz tylko prefiks w identyfikatorze modelu na `gateway/<format>:<model>`. Przy okazji
+dostajesz wbudowaną obserwowalność OpenTelemetry, śledzenie kosztów i limity wydatków.
+
+Ustawiasz klucz w zmiennej środowiskowej i adresujesz model jak zwykle, tylko z prefiksem
+`gateway/`:
+
+```bash
+export PYDANTIC_AI_GATEWAY_API_KEY="pylf_v..."
+```
+
+```python
+from pydantic_ai import Agent
+
+# Format identyfikatora to gateway/<format_api>:<nazwa_modelu>
+agent = Agent("gateway/openai:gpt-5.2")
+
+result = agent.run_sync('Skąd wzięło się "hello world"?')
+print(result.output)
+```
+
+Tym samym kluczem sięgniesz po modele różnych dostawców: `gateway/anthropic:claude-sonnet-4-6`,
+`gateway/google-cloud:gemini-3-flash-preview` czy `gateway/groq:openai/gpt-oss-120b`. Możesz
+też przekazać klucz wprost przez `gateway_provider`, gdy nie chcesz polegać na środowisku.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.gateway import gateway_provider
+
+provider = gateway_provider("openai", api_key="pylf_v...")
+model = OpenAIChatModel("gpt-5.2", provider=provider)
+agent = Agent(model)
+```
+
+Gateway działa w dwóch trybach rozliczeń. W BYOK (bring your own key) podpinasz własne klucze
+dostawców, a Gateway tylko trasuje ruch i zbiera metryki. Alternatywnie płacisz za inferencję
+bezpośrednio przez platformę. W obu przypadkach ustawisz limity wydatków na poziomie projektu,
+użytkownika i klucza, z budżetami dziennymi, tygodniowymi i miesięcznymi.
+
+<RunFlow
+  title="Żądanie przez Pydantic AI Gateway"
+  nodes={[
+    { kind: "user", label: "Zapytanie", detail: "tekst od użytkownika" },
+    { kind: "tool", label: "Gateway", detail: "jeden klucz, limity, metryki" },
+    { kind: "model", label: "Dostawca", detail: "OpenAI, Anthropic, Google..." },
+    { kind: "output", label: "Wynik", detail: "odpowiedź modelu" },
+  ]}
+/>
+
+<Callout kind="tip">
+Gateway nie tłumaczy żądań do wspólnego schematu. Ruch płynie w natywnym formacie dostawcy,
+więc nowe funkcje modeli masz dostępne od razu, a kod agenta zostaje bez zmian.
+</Callout>
+
+## Limit współbieżnych żądań HTTP
+
+Gdy uruchamiasz wiele agentów naraz, łatwo przekroczyć limit zapytań dostawcy. Zamiast ręcznie
+żonglować semaforami, owiń model w `ConcurrencyLimitedModel`. Parametr `limiter` przyjmuje
+zwykłą liczbę całkowitą (maksymalna liczba równoległych żądań HTTP) albo obiekt `ConcurrencyLimit`
+do bardziej zaawansowanej konfiguracji z kontrolą przeciążenia.
+
+```python
+import asyncio
+
+from pydantic_ai import Agent, ConcurrencyLimitedModel
+
+# Najwyżej 5 równoległych żądań HTTP do modelu
+model = ConcurrencyLimitedModel("openai:gpt-5.2", limiter=5)
+agent = Agent(model)
+
+
+async def main():
+    results = await asyncio.gather(
+        *[agent.run(f"Pytanie {i}") for i in range(20)]
+    )
+    print(len(results))
+    #> 20
+```
+
+Limit możesz też współdzielić między kilkoma modelami tego samego dostawcy. Tworzysz jeden
+`ConcurrencyLimiter` i przekazujesz go do każdego `ConcurrencyLimitedModel`, dzięki czemu pula
+żądań jest wspólna.
+
+```python
+from pydantic_ai import Agent, ConcurrencyLimitedModel, ConcurrencyLimiter
+
+# Wspólna pula z czytelną nazwą widoczną w śladach
+shared = ConcurrencyLimiter(max_running=10, name="openai-pool")
+
+model_duzy = ConcurrencyLimitedModel("openai:gpt-5.2", limiter=shared)
+model_maly = ConcurrencyLimitedModel("openai:gpt-5.2-mini", limiter=shared)
+
+agent_duzy = Agent(model_duzy)
+agent_maly = Agent(model_maly)
+```
+
+<Callout kind="note">
+To dobre miejsce, by wspomnieć o profilu modelu. Profil opisuje, jak budować żądania do danej
+rodziny modeli, niezależnie od klasy modelu i dostawcy. Gdy adresujesz model stringiem
+`dostawca:nazwa`, Pydantic AI dobiera profil za Ciebie, ale możesz go nadpisać, podając
+`profile=...` przy tworzeniu klasy modelu.
+</Callout>
+
+## Fallback na podstawie treści odpowiedzi
+
+`FallbackModel` przełącza się domyślnie przy błędach API (4xx/5xx), ale potrafi też zareagować
+na samą treść odpowiedzi, gdy żądanie HTTP się udało, lecz wynik sygnalizuje porażkę
+semantyczną. Klasyczny przykład to ucięta odpowiedź z powodu limitu długości. Sprawdzasz wtedy
+pole `finish_reason` z `ModelResponse` i zwracasz `True`, żeby wymusić przejście do kolejnego
+modelu.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import FinishReason, ModelResponse
+from pydantic_ai.models.fallback import FallbackModel
+
+
+def zly_powod_zakonczenia(response: ModelResponse) -> bool:
+    # Przejdź do następnego modelu, gdy odpowiedź ucięta lub odfiltrowana
+    reason: FinishReason | None = response.finish_reason
+    return reason in ("length", "content_filter", "error")
+
+
+fallback_model = FallbackModel(
+    "openai:gpt-5.2",
+    "anthropic:claude-sonnet-4-5",
+    fallback_on=zly_powod_zakonczenia,
+)
+
+agent = Agent(fallback_model)
+result = agent.run_sync("Jaka jest stolica Francji?")
+print(result.output)
+#> Paryż
+```
+
+Pydantic AI rozpoznaje rodzaj handlera po typie pierwszego parametru. Gdy zahintujesz go jako
+`ModelResponse`, traktuje go jako handler odpowiedzi. W przeciwnym razie (także dla lambd bez
+typów) widzi handler wyjątku. Oba rodzaje możesz wymieszać na jednej liście.
+
+```python
+from pydantic_ai import ModelAPIError
+from pydantic_ai.models.fallback import FallbackModel
+
+fallback_model = FallbackModel(
+    "openai:gpt-5.2",
+    "anthropic:claude-sonnet-4-5",
+    fallback_on=[
+        ModelAPIError,  # typ wyjątku
+        lambda exc: "rate limit" in str(exc).lower(),  # handler wyjątku
+        zly_powod_zakonczenia,  # handler odpowiedzi, rozpoznany po typie
+    ],
+)
+```
+
+<Callout kind="warning">
+Pojedynczy handler odpowiedzi przekazany jako `fallback_on` zastępuje domyślny fallback na
+`ModelAPIError`, więc błędy API zaczną się propagować jako wyjątki. Jeśli chcesz zachować oba
+zachowania, przekaż typy wyjątków i handler odpowiedzi razem na liście, jak wyżej. Fallback po
+treści działa tylko dla `run` i `run_sync`, nie dla strumieniowania.
+</Callout>
+
 ## Co dalej
 
 Umiesz już adresować modele różnych dostawców, dostrajać je przez `ModelSettings` i budować

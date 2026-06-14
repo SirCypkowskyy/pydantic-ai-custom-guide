@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLink, FileCode2, ListTree } from "lucide-react";
+import { FileCode2, ListTree } from "lucide-react";
 import { useRef } from "react";
+import { ExternalLink } from "@/components/animate-ui/icons/external-link";
+import { AnimateIcon } from "@/components/animate-ui/icons/icon";
 import { Comments } from "@/components/comments";
 import { mdxComponents } from "@/components/mdx/mdx-components";
 import { Card } from "@/components/ui/card";
@@ -101,15 +103,17 @@ export function ChapterReader({ chapter }: { chapter: Chapter }) {
           <ul className="space-y-1.5">
             {chapter.docs.map((doc) => (
               <li key={doc.url}>
-                <a
-                  href={doc.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
-                >
-                  <ExternalLink className="size-3.5 shrink-0" />
-                  {doc.label}
-                </a>
+                <AnimateIcon animateOnHover asChild>
+                  <a
+                    href={doc.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+                  >
+                    <ExternalLink className="size-3.5 shrink-0" />
+                    {doc.label}
+                  </a>
+                </AnimateIcon>
               </li>
             ))}
           </ul>

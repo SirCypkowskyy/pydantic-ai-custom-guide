@@ -1,6 +1,9 @@
-import { Download, RotateCcw, Upload } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { Download } from "@/components/animate-ui/icons/download";
+import { AnimateIcon } from "@/components/animate-ui/icons/icon";
+import { RotateCcw } from "@/components/animate-ui/icons/rotate-ccw";
+import { Upload } from "@/components/animate-ui/icons/upload";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -53,17 +56,21 @@ export function ProgressActions() {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Button variant="outline" size="sm" onClick={exportData} className="gap-2">
-        <Download className="size-4" />
-        {t("progress.export")}
-      </Button>
+      <AnimateIcon animateOnHover asChild>
+        <Button variant="outline" size="sm" onClick={exportData} className="gap-2">
+          <Download className="size-4" />
+          {t("progress.export")}
+        </Button>
+      </AnimateIcon>
 
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
         <DialogTrigger asChild>
-          <Button variant="outline" size="sm" className="gap-2">
-            <Upload className="size-4" />
-            {t("progress.import")}
-          </Button>
+          <AnimateIcon animateOnHover asChild>
+            <Button variant="outline" size="sm" className="gap-2">
+              <Upload className="size-4" />
+              {t("progress.import")}
+            </Button>
+          </AnimateIcon>
         </DialogTrigger>
         <DialogContent>
           <DialogHeader>
@@ -90,10 +97,12 @@ export function ProgressActions() {
 
       <AlertDialog>
         <AlertDialogTrigger asChild>
-          <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground">
-            <RotateCcw className="size-4" />
-            {t("progress.reset")}
-          </Button>
+          <AnimateIcon animateOnHover asChild>
+            <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground">
+              <RotateCcw className="size-4" />
+              {t("progress.reset")}
+            </Button>
+          </AnimateIcon>
         </AlertDialogTrigger>
         <AlertDialogContent>
           <AlertDialogHeader>

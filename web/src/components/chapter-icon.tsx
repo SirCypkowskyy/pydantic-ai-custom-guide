@@ -1,14 +1,14 @@
 import {
   Activity,
-  Bot,
   Boxes,
   Braces,
+  Database,
   FlaskConical,
-  Layers,
-  type LucideIcon,
+  Image,
   MessagesSquare,
+  PencilRuler,
   Plug,
-  Radio,
+  Puzzle,
   Rocket,
   Server,
   Settings2,
@@ -16,9 +16,18 @@ import {
   Workflow,
   Wrench,
 } from "lucide-react";
-import type { ComponentProps } from "react";
+import type { ComponentType } from "react";
+import { Bot } from "@/components/animate-ui/icons/bot";
+import { Layers } from "@/components/animate-ui/icons/layers";
+import { Radio } from "@/components/animate-ui/icons/radio";
 
-const ICONS: Record<string, LucideIcon> = {
+// Common props shared by both lucide and animate-ui icon components. Narrow on
+// purpose so the two icon families are assignable to a single map type.
+type IconComponent = ComponentType<{ className?: string; size?: number }>;
+
+// Icons with an animate-ui equivalent animate when a parent <AnimateIcon> (card,
+// sidebar item, search result) is hovered; the rest stay as static lucide icons.
+const ICONS: Record<string, IconComponent> = {
   Rocket,
   Bot,
   Layers,
@@ -34,10 +43,16 @@ const ICONS: Record<string, LucideIcon> = {
   ShieldCheck,
   Settings2,
   Server,
+  Puzzle,
+  PencilRuler,
+  Image,
+  Database,
 };
 
-interface ChapterIconProps extends ComponentProps<LucideIcon> {
+interface ChapterIconProps {
   name: string;
+  className?: string;
+  size?: number;
 }
 
 export function ChapterIcon({ name, ...props }: ChapterIconProps) {

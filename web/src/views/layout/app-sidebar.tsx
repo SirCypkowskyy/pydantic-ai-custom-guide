@@ -1,5 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Check } from "lucide-react";
+import { Check } from "@/components/animate-ui/icons/check";
+import { AnimateIcon } from "@/components/animate-ui/icons/icon";
 import { BrandLogo } from "@/components/brand-logo";
 import { ChapterIcon } from "@/components/chapter-icon";
 import { ProgressRing } from "@/components/progress-ring";
@@ -55,32 +56,34 @@ export function AppSidebar() {
                     const isActive = pathname === href;
                     const done = state.chapters[chapter.slug]?.completed ?? false;
                     return (
-                      <SidebarMenuItem key={chapter.slug}>
-                        <SidebarMenuButton
-                          asChild
-                          isActive={isActive}
-                          tooltip={`${chapter.order}. ${chapter.title[lang]}`}
-                        >
-                          <Link
-                            to="/chapters/$slug"
-                            params={{ slug: chapter.slug }}
-                            onClick={() => setOpenMobile(false)}
+                      <AnimateIcon key={chapter.slug} animateOnHover asChild>
+                        <SidebarMenuItem>
+                          <SidebarMenuButton
+                            asChild
+                            isActive={isActive}
+                            tooltip={`${chapter.order}. ${chapter.title[lang]}`}
                           >
-                            <ChapterIcon name={chapter.icon} />
-                            <span className="truncate">
-                              <span className="text-muted-foreground tabular-nums">
-                                {chapter.order}.
-                              </span>{" "}
-                              {chapter.title[lang]}
-                            </span>
-                          </Link>
-                        </SidebarMenuButton>
-                        {done ? (
-                          <SidebarMenuBadge className="text-chart-5">
-                            <Check className="size-3.5" />
-                          </SidebarMenuBadge>
-                        ) : null}
-                      </SidebarMenuItem>
+                            <Link
+                              to="/chapters/$slug"
+                              params={{ slug: chapter.slug }}
+                              onClick={() => setOpenMobile(false)}
+                            >
+                              <ChapterIcon name={chapter.icon} />
+                              <span className="truncate">
+                                <span className="text-muted-foreground tabular-nums">
+                                  {chapter.order}.
+                                </span>{" "}
+                                {chapter.title[lang]}
+                              </span>
+                            </Link>
+                          </SidebarMenuButton>
+                          {done ? (
+                            <SidebarMenuBadge className="text-chart-5">
+                              <Check className="size-3.5" />
+                            </SidebarMenuBadge>
+                          ) : null}
+                        </SidebarMenuItem>
+                      </AnimateIcon>
                     );
                   })}
               </SidebarMenu>

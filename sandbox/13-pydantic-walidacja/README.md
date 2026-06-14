@@ -1,23 +1,23 @@
-# 13 - Pydantic: walidacja w rdzeniu
+# 13 - Pydantic: validation at the core
 
-Towarzyszy rozdziałowi [Pydantic](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/pydantic).
+Accompanies the [Pydantic](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/pydantic) chapter.
 
-Pokazuje walidację, na której opiera się Pydantic AI: ograniczenia pól przez `Field`,
-walidatory `field_validator` i `model_validator`, pola pochodne `computed_field`,
-`TypeAdapter` do walidacji danych spoza modelu oraz round trip `model_validate` /
-`model_dump`. Ten sam model jest użyty jako `output_type` agenta, więc odpowiedź modelu
-przychodzi już zwalidowana.
+Shows the validation that Pydantic AI is built on: field constraints via `Field`,
+`field_validator` and `model_validator` validators, derived fields via `computed_field`,
+`TypeAdapter` for validating data from outside a model, and the `model_validate` /
+`model_dump` round trip. The same model is used as the agent's `output_type`, so the model's response
+arrives already validated.
 
-Część Pydantic działa offline. Część z agentem wymaga Ollama Cloud.
+The Pydantic part works offline. The part with the agent requires Ollama Cloud.
 
-## Uruchomienie
+## Running
 
 ```bash
-# z katalogu sandbox/
+# from the sandbox/ directory
 uv run 13-pydantic-walidacja/main.py
 
-# smoke test (działa offline, bez klucza)
+# smoke test (works offline, without a key)
 uv run pytest 13-pydantic-walidacja/smoke_test.py
 ```
 
-Część online wymaga `OLLAMA_CLOUD_API_KEY` w pliku `.env` w katalogu głównym repozytorium.
+The online part requires `OLLAMA_CLOUD_API_KEY` in the `.env` file in the repository root.

@@ -1,21 +1,21 @@
-# 05 - Narzedzia
+# 05 - Tools
 
-Towarzyszy rozdziałowi [Narzędzia](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/narzedzia).
+Accompanies the [Tools](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/narzedzia) chapter.
 
-Pokazuje wywoływanie funkcji przez agenta: `@agent.tool_plain` dla narzędzia bez
-kontekstu, `@agent.tool` z dostępem do zależności przez `RunContext` oraz
-`ModelRetry`, które każe modelowi poprawić błędne argumenty. Opisy narzędzi i
-schematy argumentów pochodzą z podpowiedzi typów i docstringów.
+Shows function calling by the agent: `@agent.tool_plain` for a tool without
+context, `@agent.tool` with access to dependencies through `RunContext`, and
+`ModelRetry`, which tells the model to fix faulty arguments. Tool descriptions and
+argument schemas come from type hints and docstrings.
 
-## Uruchomienie
+## Running
 
 ```bash
-# z katalogu sandbox/
+# from the sandbox/ directory
 uv run 05-narzedzia/main.py
 
 # smoke test
 uv run pytest 05-narzedzia/smoke_test.py
 ```
 
-Wymaga `OLLAMA_CLOUD_API_KEY` w pliku `.env` w katalogu głównym repozytorium.
-Używa modelu `qwen3-coder:480b`, który potrafi wywoływać funkcje.
+Requires `OLLAMA_CLOUD_API_KEY` in the `.env` file in the repository root.
+Uses the `qwen3-coder:480b` model, which can call functions.

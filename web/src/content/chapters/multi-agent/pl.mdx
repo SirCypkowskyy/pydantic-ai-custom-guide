@@ -205,6 +205,190 @@ losowości ani zewnętrznych efektów ubocznych wewnątrz węzła bez przemyśle
 wyglądać po wznowieniu.
 </Callout>
 
+## Cztery silniki trwałego wykonania
+
+DBOS to tylko jeden z wyborów. Pydantic AI oficjalnie wspiera cztery rozwiązania trwałego
+wykonania, a każde z nich jest współutrzymywane przez zespół Pydantic i dostawcę silnika.
+Wszystkie korzystają wyłącznie z publicznego interfejsu agenta, więc służą też za wzorzec,
+gdy chcesz spiąć agenta z własnym systemem.
+
+- **Temporal**: dojrzały silnik workflow z osobnym workerem i serwerem. Dobry, gdy masz już
+  infrastrukturę Temporala albo potrzebujesz długich, asynchronicznych procesów.
+- **DBOS**: lekka biblioteka, która zapisuje stan w bazie (na przykład SQLite albo
+  Postgres). Bez osobnego serwera, co pokazaliśmy wyżej.
+- **Prefect**: silnik orkiestracji popularny w świecie data engineeringu, z gotowym
+  podglądem przebiegów.
+- **Restate**: silnik nastawiony na trwałe, odporne na awarie wywołania i obsługę
+  człowieka w pętli.
+
+Niezależnie od silnika wzorzec jest ten sam: owijasz agenta adapterem danego backendu i
+dalej wołasz zwykłe `run`. Streaming i MCP działają tak samo, tyle że z odpornością na
+awarie.
+
+```python
+from temporalio.client import Client
+from temporalio.worker import Worker
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import TemporalAgent
+
+agent = Agent("openai:gpt-5.2", instructions="Jesteś ekspertem od geografii.", name="geo")
+trwaly_agent = TemporalAgent(agent)
+
+
+async def main() -> None:
+    client = await Client.connect("localhost:7233")
+    # worker rejestruje workflow oparty na agencie; szczegóły zależą od silnika
+    async with Worker(client, task_queue="geo", workflows=[...]):
+        result = await trwaly_agent.run("Jaka jest stolica Meksyku?")
+        print(result.output)
+        #> Stolicą Meksyku jest Meksyk (Ciudad de México).
+```
+
+<Callout kind="tip">
+Wybór silnika to głównie decyzja operacyjna, nie zmiana kodu agenta. Zaczynaj od DBOS, gdy
+nie chcesz osobnego serwera, a po Temporal czy Restate sięgaj, gdy potrzebujesz długich
+procesów albo człowieka w pętli na produkcji.
+</Callout>
+
+## Code Mode: model pisze kod zamiast wołać narzędzia po kolei
+
+Standardowe wołanie narzędzi ma jeden koszt: każde wywołanie to osobny obieg do modelu.
+Agent, który ma pobrać dziesięć rekordów i przetworzyć każdy z nich, robi jedenaście albo
+więcej zapytań do modelu. To wolne, drogie i zapycha kontekst.
+
+<Term definition="Code Mode to capability z pakietu Pydantic AI Harness, która łączy wszystkie narzędzia agenta w jedno narzędzie run_code działające w piaskownicy.">Code Mode</Term>
+odwraca to podejście. Zamiast wystawiać modelowi listę narzędzi, owijasz je w jedno
+narzędzie `run_code` napędzane piaskownicą Monty. Model pisze kawałek Pythona, który woła
+wiele narzędzi w pętlach, warunkach i przez `asyncio.gather`, a wszystko to mieści się w
+jednym wywołaniu narzędzia.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+agent = Agent("openai:gpt-5.2", capabilities=[CodeMode()])
+
+
+@agent.tool_plain
+def pogoda(miasto: str) -> dict:
+    """Zwróć bieżącą pogodę dla miasta."""
+    return {"miasto": miasto, "temp_f": 72, "stan": "słonecznie"}
+
+
+@agent.tool_plain
+def na_celsjusze(fahrenheit: float) -> float:
+    """Przelicz stopnie Fahrenheita na Celsjusze."""
+    return round((fahrenheit - 32) * 5 / 9, 1)
+
+
+result = agent.run_sync("Jaka jest pogoda w Paryżu i Tokio, w stopniach Celsjusza?")
+print(result.output)
+```
+
+Model nie woła `pogoda` ani `na_celsjusze` osobno. Zamiast tego pisze i wykonuje w
+piaskownicy kod, który zbiera wszystko w jednym przebiegu:
+
+```python
+paris, tokyo = await asyncio.gather(
+    pogoda(miasto="Paryż"),
+    pogoda(miasto="Tokio"),
+)
+paris_c = await na_celsjusze(fahrenheit=paris["temp_f"])
+tokyo_c = await na_celsjusze(fahrenheit=tokyo["temp_f"])
+{"paris": paris_c, "tokyo": tokyo_c}
+```
+
+Cztery wywołania narzędzi zwijają się do jednego obiegu do modelu. Capability `CodeMode`
+pochodzi z pakietu Pydantic AI Harness, oficjalnej biblioteki capability dla Pydantic AI.
+
+<Callout kind="note">
+Code Mode wykonuje wygenerowany kod w piaskownicy Monty z ograniczeniami, więc model nie
+sięga poza udostępnione narzędzia. To capability, a nie zwykłe narzędzie: dodajesz je przez
+`capabilities=[CodeMode()]`, a Harness instalujesz z dodatkiem `pydantic-ai-harness[code-mode]`.
+</Callout>
+
+## Builder grafów: kroki, decyzje i równoległość
+
+Styl `BaseNode`, który pokazaliśmy wcześniej, jest obiektowy i świetnie nadaje się do
+maszyn stanów. Obok niego `pydantic-graph` ma drugie, nowsze API: `GraphBuilder`. To wzorzec
+budowniczego, w którym kroki to dekorowane funkcje, a krawędzie deklarujesz jawnie. To samo
+narzędzie, inny styl, lepszy do deklaratywnej równoległości.
+
+`GraphBuilder` daje kilka klocków:
+
+- **Step** (`@g.step`): krok wykonujący funkcję async, z dostępem do `ctx.state`,
+  `ctx.deps` i `ctx.inputs`.
+- **Decision**: węzeł rozgałęziający na podstawie warunku.
+- **Spread i Broadcast**: `.map()` rozsyła każdy element iterowalny do osobnego,
+  równoległego wykonania kroku, a broadcast wysyła te same dane na wiele ścieżek naraz.
+- **Join i Reducer**: węzeł, który zbiera wyniki z równoległych ścieżek za pomocą reducera,
+  na przykład `reduce_list_append`.
+
+Poniżej start node dostaje listę liczb, `.map()` rozsyła każdą do osobnego wykonania kroku
+`square`, a `join` skleja wyniki z powrotem.
+
+```python
+from dataclasses import dataclass
+
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
+
+
+@dataclass
+class Stan:
+    przetworzone: int = 0
+
+
+async def main() -> None:
+    g = GraphBuilder(
+        state_type=Stan,
+        input_type=list[int],
+        output_type=list[int],
+    )
+
+    @g.step
+    async def square(ctx: StepContext[Stan, None, int]) -> int:
+        ctx.state.przetworzone += 1
+        return ctx.inputs * ctx.inputs
+
+    zbierz = g.join(reduce_list_append, initial_factory=list[int])
+
+    g.add(
+        g.edge_from(g.start_node).map().to(square),
+        g.edge_from(square).to(zbierz),
+        g.edge_from(zbierz).to(g.end_node),
+    )
+
+    graph = g.build()
+    stan = Stan()
+    result = await graph.run(state=stan, inputs=[1, 2, 3, 4, 5])
+    print(sorted(result))
+    #> [1, 4, 9, 16, 25]
+    print(stan.przetworzone)
+    #> 5
+```
+
+<RunFlow
+  title="Builder grafów: map rozsyła pracę, join ją skleja"
+  nodes={[
+    { kind: "user", label: "Wejście", detail: "lista [1..5]" },
+    { kind: "tool", label: "map -> square", detail: "5 równoległych kroków" },
+    { kind: "tool", label: "join (reducer)", detail: "reduce_list_append" },
+    { kind: "output", label: "Wynik", detail: "[1, 4, 9, 16, 25]" },
+  ]}
+/>
+
+Oba API są w pełni wspierane i da się je łączyć. Jest jednak istotna różnica: builder nie ma
+wbudowanej trwałości stanu, bo spójne migawki przy równoległości są trudne. Gdy potrzebujesz
+wznawiania po awarii, łącz builder z jednym z silników trwałego wykonania z poprzednich
+sekcji.
+
+<Callout kind="warning">
+Builder grafów nie zapisuje stanu sam z siebie, w przeciwieństwie do API `BaseNode`. Jeśli
+przepływ musi przeżyć restart procesu, oprzyj go na silniku trwałego wykonania (Temporal,
+DBOS, Prefect albo Restate), a nie na samym buderze.
+</Callout>
+
 ## Co dalej
 
 Masz teraz cztery narzędzia do łączenia agentów: delegację, programowy hand-off, grafy i

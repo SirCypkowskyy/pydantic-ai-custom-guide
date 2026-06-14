@@ -1,23 +1,23 @@
-# 10 - Multi-agent i grafy
+# 10 - Multi-agent and graphs
 
-Towarzyszy rozdziałowi [Multi-agent i grafy](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/multi-agent).
+Accompanies the [Multi-agent and graphs](https://sircypkowskyy.github.io/pydantic-ai-custom-guide/chapters/multi-agent) chapter.
 
-Pokazuje dwa wzorce składania agentów:
+Shows two patterns for composing agents:
 
-- **Delegacja agenta** - agent nadrzędny wywołuje innego agenta z wnętrza narzędzia
-  i sumuje jego zużycie (`usage`) z głównym przebiegiem.
-- **Graf `pydantic_graph`** - maszyna stanów, w której węzły `Research`, `Draft`
-  i `Review` przekazują sobie sterowanie, korzystając ze wspólnego, typowanego stanu.
-  Węzeł `Review` albo zatwierdza akapit, albo zawraca go do jednej poprawki.
+- **Agent delegation** - a parent agent calls another agent from inside a tool
+  and sums its usage (`usage`) with the main run.
+- **A `pydantic_graph` graph** - a state machine in which the `Research`, `Draft`
+  and `Review` nodes hand off control to each other, using a shared, typed state.
+  The `Review` node either approves the paragraph or sends it back for one revision.
 
-## Uruchomienie
+## Running
 
 ```bash
-# z katalogu sandbox/
+# from the sandbox/ directory
 uv run 10-multi-agent/main.py
 
 # smoke test
 uv run pytest 10-multi-agent/smoke_test.py
 ```
 
-Wymaga `OLLAMA_CLOUD_API_KEY` w pliku `.env` w katalogu głównym repozytorium.
+Requires `OLLAMA_CLOUD_API_KEY` in the `.env` file in the repository root.

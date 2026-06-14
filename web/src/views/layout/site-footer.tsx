@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Heart } from "lucide-react";
+import { Heart } from "@/components/animate-ui/icons/heart";
 import { BrandLogo } from "@/components/brand-logo";
 import { GithubIcon } from "@/components/icons/github-icon";
 import { useLanguage } from "@/hooks/use-language";
@@ -55,7 +55,7 @@ export function SiteFooter() {
       <div className="border-t">
         <p className="mx-auto flex w-full max-w-6xl items-center gap-1.5 px-5 py-4 text-xs text-muted-foreground">
           {t("footer.builtWith")} React, Vite, shadcn/ui, animate-ui
-          <Heart className="size-3 fill-primary text-primary" />
+          <Heart className="size-3 fill-primary text-primary" animateOnView />
         </p>
       </div>
     </footer>

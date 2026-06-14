@@ -144,6 +144,230 @@ the input to the next.
     R2 --> O[result.output]`}
 />
 
+## Correlating runs with conversation_id
+
+Every `ModelRequest` and `ModelResponse` carries two identifiers. `run_id` is unique per agent
+run. `conversation_id` is shared across all runs that build on the same history. A fresh
+`conversation_id` is generated on the first run, stamped onto every message that run produces,
+and inherited by later runs that you feed those messages back into through `message_history`.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent("openai:gpt-5.2")
+
+result1 = agent.run_sync("Tell me a joke.")
+result2 = agent.run_sync("Explain?", message_history=result1.all_messages())
+
+# Both runs belong to the same conversation.
+assert result1.conversation_id == result2.conversation_id
+
+# Forking a thread: ignore the existing conversation_id and start a new one.
+forked = agent.run_sync(
+    "Tell me a different joke.",
+    message_history=result1.all_messages(),
+    conversation_id="new",
+)
+assert forked.conversation_id != result1.conversation_id
+```
+
+You can also pass your own `conversation_id="<your-id>"`, for example a chat thread ID from your
+database. The value `conversation_id="new"` starts a fresh conversation and ignores whatever is
+already sitting in `message_history`. That is handy when you want to branch off an existing
+thread without forcing the calling code to generate its own identifier.
+
+<Callout kind="note">
+On the observability side, `run_id` lands on the OpenTelemetry span as `gen_ai.agent.call.id`,
+and `conversation_id` as `gen_ai.conversation.id`. In Logfire or any OpenTelemetry backend you
+can therefore stitch together the traces of a whole multi-turn conversation without tracking
+anything yourself. As long as the history round-trips, the conversation ID rides along with it.
+</Callout>
+
+## Processing the history before it is sent
+
+Sometimes you want to change the history before it reaches the model: filter out sensitive data,
+trim the list to save tokens, or simply give the model less context. The `ProcessHistory`
+capability does this, and you pass it through `capabilities`. It wraps a function that takes a
+list of `ModelMessage` and returns a modified list of the same type. A processor can be
+synchronous or asynchronous, and if you supply several, they run in sequence.
+
+```python
+from pydantic_ai import Agent, ModelMessage, ModelRequest
+from pydantic_ai.capabilities import ProcessHistory
+
+
+def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Keep only ModelRequest messages, drop every ModelResponse."""
+    return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+
+def keep_recent(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Trim the history to the last five messages."""
+    return messages[-5:] if len(messages) > 5 else messages
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    capabilities=[ProcessHistory(filter_responses), ProcessHistory(keep_recent)],
+)
+```
+
+A processor can also take `RunContext` as its first parameter when the decision should depend on
+the state of the run, for example on the tokens used so far. Then you only filter the history
+once it actually grows long.
+
+```python
+from pydantic_ai import Agent, ModelMessage, RunContext
+from pydantic_ai.capabilities import ProcessHistory
+
+
+def context_aware_processor(
+    ctx: RunContext[None],
+    messages: list[ModelMessage],
+) -> list[ModelMessage]:
+    if ctx.usage.total_tokens > 1000:
+        return messages[-3:]  # When usage is high, keep only recent messages.
+    return messages
+
+
+agent = Agent("openai:gpt-5.2", capabilities=[ProcessHistory(context_aware_processor)])
+```
+
+The most economical variant is summarising. Instead of throwing old turns away, you hand them to
+a cheaper agent that folds them into a short summary and pastes it back at the head of the
+history.
+
+```python
+from pydantic_ai import Agent, ModelMessage
+from pydantic_ai.capabilities import ProcessHistory
+
+# A cheaper model for summarising old messages.
+summarize_agent = Agent(
+    "openai:gpt-5-mini",
+    instructions="Summarize this conversation, omitting small talk. Focus on the technical decisions.",
+)
+
+
+async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    if len(messages) > 10:
+        oldest = messages[:10]
+        summary = await summarize_agent.run(message_history=oldest)
+        # The summary plus the last message, which stays untouched.
+        return summary.new_messages() + messages[-1:]
+    return messages
+
+
+agent = Agent("openai:gpt-5.2", capabilities=[ProcessHistory(summarize_old_messages)])
+```
+
+<Callout kind="warning">
+When you slice or summarise the history, keep tool calls and their returns paired. If a
+`ToolCallPart` is left without a matching `ToolReturnPart`, the model may return an error.
+Processors replace the history in the run state, so if you care about the original, make a copy
+of it first.
+</Callout>
+
+## Injecting messages mid-run
+
+Tools and code driving a run can push extra content into the conversation while it is still
+going. From inside a tool, where you have a `RunContext`, you use `ctx.enqueue(...)`. From
+external code that drives the run through `agent.iter()`, you use `agent_run.enqueue(...)`. The
+`priority` parameter decides when the content is delivered. `'asap'` (the default) adds it to the
+next `ModelRequest`, and if the agent would otherwise finish first, it redirects the run into one
+more request. `'when_idle'` waits until the agent is done with its current work and only then
+hands the content over as a follow-up task.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import SystemPromptPart
+
+agent = Agent("anthropic:claude-opus-4-7")
+
+
+@agent.tool
+def trigger_alert(ctx: RunContext[None]) -> str:
+    ctx.enqueue("Alert: production is degraded, prioritize triage.")
+    return "alert raised"
+
+
+@agent.tool
+def enter_incident_mode(ctx: RunContext[None]) -> str:
+    # A SystemPromptPart lets you adjust the agent's standing instructions mid-run.
+    ctx.enqueue(SystemPromptPart(content="You are now in incident mode: be terse and action-oriented."))
+    return "incident mode enabled"
+```
+
+When you drive a run from the outside, for example by forwarding events from a webhook or a job
+queue, you add work through `AgentRun.enqueue`. Content with `'when_idle'` is only drained when
+the agent would otherwise reach the end, so the run has to be driven through `agent.run` or
+explicitly through `AgentRun.next()`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_graph import End
+
+agent = Agent("anthropic:claude-opus-4-7")
+
+
+async def main():
+    async with agent.iter("Summarize the latest deploy report") as agent_run:
+        # An external system pushes a follow-up while the agent is working.
+        agent_run.enqueue(
+            "A new error was just reported, include it in the summary.",
+            priority="when_idle",
+        )
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            node = await agent_run.next(node)
+```
+
+<Callout kind="warning">
+Reaching the end of a bare `async for node in agent_run:` loop with undrained `'when_idle'`
+messages raises `UndrainedPendingMessagesError`, since those messages would otherwise be silently
+lost. Each end-of-run redirect opens a new model request, so a tool that enqueues on every step
+will loop the run forever. Set `UsageLimits` as a safety net.
+</Callout>
+
+<RunFlow
+  title="enqueue with 'when_idle' redirects the run"
+  nodes={[
+    { kind: "user", label: "Start", detail: "agent.iter(...)" },
+    { kind: "tool", label: "Agent works", detail: "summarises report" },
+    { kind: "user", label: "enqueue", detail: "when_idle: new error" },
+    { kind: "output", label: "Redirect", detail: "one more request with error" },
+  ]}
+/>
+
+## History straight to JSON bytes
+
+`all_messages()` and `new_messages()` have variants that return ready JSON bytes:
+`all_messages_json()` and `new_messages_json()`. They help when you want to drop the history into
+a `bytes` column in a database or send it back to a frontend, without manually routing it through
+`to_jsonable_python` and `json.dumps`.
+
+```python
+from pydantic_ai import Agent, ModelMessagesTypeAdapter
+
+agent = Agent("openai:gpt-5.2", instructions="Be a helpful assistant.")
+
+result1 = agent.run_sync("Tell me a joke.")
+
+# Raw JSON bytes, ready for a bytes column or a network response.
+as_json = result1.all_messages_json()
+
+# Validation works straight on the bytes, with no intermediate json.loads.
+restored = ModelMessagesTypeAdapter.validate_json(as_json)
+
+result2 = agent.run_sync("A different joke, please.", message_history=restored)
+print(result2.output)
+#> Why do programmers prefer dark mode? Because light attracts bugs.
+```
+
+The difference from `to_jsonable_python` in the earlier section is simple. That helper gives you
+Python objects that you still serialise yourself. The `_json` variants return bytes directly, and
+on the way back `ModelMessagesTypeAdapter.validate_json` rebuilds the full message objects from
+them.
+
 ## What is next
 
 You can now read the message structure, run a multi-turn conversation, and persist history as

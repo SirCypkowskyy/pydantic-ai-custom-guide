@@ -168,6 +168,223 @@ wynik i zależności dokładaj dopiero wtedy, gdy naprawdę ich potrzebujesz. Ka
 elementów ma w tym przewodniku własny rozdział.
 </Callout>
 
+## Zaglądanie do środka uruchomienia z agent.iter()
+
+Pod spodem każdy agent korzysta z grafu (pydantic-graph), który steruje przebiegiem
+uruchomienia. Zwykłe `run()` po prostu przechodzi ten graf od początku do końca. Kiedy
+chcesz zobaczyć każdy krok albo wpiąć własną logikę pomiędzy etapami, użyj `agent.iter()`.
+Zwraca on obiekt `AgentRun`, po którym można iterować jako po asynchronicznym iteratorze
+węzłów grafu.
+
+Węzły mają konkretne typy. `UserPromptNode` przygotowuje zapytanie użytkownika,
+`ModelRequestNode` wysyła żądanie do modelu, `CallToolsNode` przetwarza odpowiedź i ewentualnie
+wywołuje narzędzia, a `End` oznacza koniec z gotowym wynikiem.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent("openai:gpt-5.2")
+
+
+async def main() -> None:
+    wezly = []
+    async with agent.iter("Jaka jest stolica Francji?") as agent_run:
+        async for node in agent_run:
+            wezly.append(type(node).__name__)
+    print(wezly)
+    #> ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode', 'End']
+    print(agent_run.result.output)
+    #> Stolicą Francji jest Paryż.
+```
+
+Możesz też przejmować sterowanie ręcznie. Metoda `AgentRun.next(node)` wykonuje podany
+węzeł, dopisuje go do historii uruchomienia i zwraca następny węzeł do wykonania. Dzięki
+temu możesz obejrzeć lub zmienić węzeł, zanim się wykona.
+
+```python
+from pydantic_ai import Agent
+from pydantic_graph import End
+
+agent = Agent("openai:gpt-5.2")
+
+
+async def main() -> None:
+    async with agent.iter("Jaka jest stolica Francji?") as agent_run:
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            node = await agent_run.next(node)
+    print(agent_run.result.output)
+    #> Stolicą Francji jest Paryż.
+```
+
+<RunFlow
+  title="Węzły grafu podczas jednego uruchomienia"
+  nodes={[
+    { kind: "user", label: "UserPromptNode", detail: "przygotowuje zapytanie" },
+    { kind: "model", label: "ModelRequestNode", detail: "żądanie do modelu" },
+    { kind: "agent", label: "CallToolsNode", detail: "narzędzia i odpowiedź" },
+    { kind: "output", label: "End", detail: "FinalResult" },
+  ]}
+/>
+
+<Callout kind="note">
+Pamiętaj, że `End` to węzeł końcowy: jego instancji nie przekazujesz już do `next()`.
+Pętla ręczna kończy się dokładnie w momencie, gdy `next()` zwróci `End`. Statystyki
+użycia są dostępne w dowolnej chwili przez `agent_run.usage`.
+</Callout>
+
+## Limity i śledzenie użycia
+
+Każde uruchomienie zużywa tokeny, a jeśli model wpadnie w pętlę wywołań narzędzi, może
+ich zużyć zdecydowanie za dużo. Pydantic AI daje strukturę `UsageLimits`, którą
+przekazujesz argumentem `usage_limits` do metod `run`, `run_sync` i `run_stream`. Po
+zakończeniu uruchomienia statystyki znajdziesz w `result.usage`.
+
+```python
+from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
+
+agent = Agent("openai:gpt-5.2")
+
+result = agent.run_sync(
+    "Jaka jest stolica Włoch? Odpowiedz samą nazwą miasta.",
+    usage_limits=UsageLimits(response_tokens_limit=10),
+)
+print(result.output)
+#> Rzym
+print(result.usage)
+#> RunUsage(input_tokens=62, output_tokens=1, requests=1)
+```
+
+Najbardziej praktyczny jest `request_limit`, czyli limit liczby żądań do modelu. Chroni
+on przed nieskończoną pętlą, w której model w kółko wywołuje to samo narzędzie. Gdy limit
+zostanie przekroczony, uruchomienie podnosi wyjątek `UsageLimitExceeded`.
+
+```python
+from pydantic_ai import Agent, ModelRetry, UsageLimitExceeded, UsageLimits
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="Po każdej odpowiedzi wywołaj narzędzie, by wygenerować kolejną.",
+)
+
+
+@agent.tool_plain
+def petla() -> int:
+    raise ModelRetry("Spróbuj jeszcze raz.")
+
+
+try:
+    agent.run_sync("Start!", usage_limits=UsageLimits(request_limit=3))
+except UsageLimitExceeded as e:
+    print(e)
+    #> The next request would exceed the request_limit of 3
+```
+
+<Callout kind="tip">
+Jeśli zarejestrowałeś dużo narzędzi, ustaw `request_limit`, by ograniczyć liczbę tur
+modelu, oraz `tool_calls_limit`, by ograniczyć liczbę udanych wywołań narzędzi w jednym
+uruchomieniu. Limit wywołań narzędzi sprawdzany jest przed ich wykonaniem.
+</Callout>
+
+## Gdy model zachowa się nieoczekiwanie
+
+Czasem model przekroczy limit ponowień albo jego API zwróci błąd. W takich sytuacjach
+uruchomienie podnosi wyjątek `UnexpectedModelBehavior`. Żeby zrozumieć, co poszło nie tak,
+owiń uruchomienie w `capture_run_messages()`. Ten menedżer kontekstu daje dostęp do
+wszystkich wiadomości wymienionych w trakcie uruchomienia, nawet gdy zakończyło się
+wyjątkiem.
+
+```python
+from pydantic_ai import (
+    Agent,
+    ModelRetry,
+    UnexpectedModelBehavior,
+    capture_run_messages,
+)
+
+agent = Agent("openai:gpt-5.2")
+
+
+@agent.tool_plain
+def policz_objetosc(size: int) -> int:
+    if size == 42:
+        return size**3
+    raise ModelRetry("Spróbuj jeszcze raz.")
+
+
+with capture_run_messages() as messages:
+    try:
+        result = agent.run_sync("Podaj objętość pudełka o boku 6.")
+    except UnexpectedModelBehavior as e:
+        print("Wystąpił błąd:", e)
+        #> Wystąpił błąd: Tool 'policz_objetosc' exceeded max retries count of 1
+        print("przyczyna:", repr(e.__cause__))
+        #> przyczyna: ModelRetry('Spróbuj jeszcze raz.')
+        print("liczba wiadomości:", len(messages))
+    else:
+        print(result.output)
+```
+
+<Callout kind="note">
+Jeśli w jednym kontekście `capture_run_messages` wywołasz uruchomienie więcej niż raz,
+`messages` będzie zawierać wiadomości wyłącznie z pierwszego wywołania. Do diagnostyki
+jednego uruchomienia to wystarcza, ale warto o tym pamiętać.
+</Callout>
+
+## Specyfikacje agentów i żądania bezpośrednie
+
+Agenta nie musisz budować w kodzie. Specyfikacje agentów pozwalają opisać go deklaratywnie
+w pliku YAML lub JSON: model, instrukcje, ustawienia modelu i capabilities. Taki plik
+wczytujesz jedną linijką przez `Agent.from_file`, a kod aplikacji zostaje oddzielony od
+konfiguracji. Dzięki temu osoby spoza zespołu programistów, na przykład eksperci dziedzinowi,
+mogą zmieniać zachowanie agenta bez dotykania Pythona.
+
+```yaml
+# agent.yaml
+model: openai:gpt-5.2
+instructions: Jesteś pomocnym asystentem badawczym.
+model_settings:
+  max_tokens: 8192
+```
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent.from_file("agent.yaml")
+result = agent.run_sync("Streść mi temat w trzech zdaniach.")
+print(result.output)
+```
+
+Metoda `Agent.from_spec` przyjmuje słownik albo instancję `AgentSpec` i pozwala dorzucić
+dodatkowe argumenty, na przykład `deps_type`, które uzupełniają lub nadpisują specyfikację.
+Instrukcje i capabilities są wtedy łączone: najpierw te ze specyfikacji, potem te z kodu.
+
+Na drugim końcu spektrum stoją żądania bezpośrednie z modułu `direct`. To cienka warstwa
+nad samym modelem, bez pętli agenta, narzędzi czy automatycznego parsowania wyniku. Używasz
+ich, gdy potrzebujesz pełnej kontroli nad pojedynczym żądaniem albo budujesz własną
+abstrakcję na modelach.
+
+```python
+from pydantic_ai import ModelRequest
+from pydantic_ai.direct import model_request_sync
+
+model_response = model_request_sync(
+    "openai:gpt-5.2",
+    [ModelRequest.user_text_prompt("Jaka jest stolica Francji?")],
+)
+print(model_response.parts[0].content)
+#> Stolicą Francji jest Paryż.
+print(model_response.usage)
+#> RequestUsage(input_tokens=56, output_tokens=7)
+```
+
+<Callout kind="key">
+Wybierz `Agent`, gdy chcesz pełnej funkcjonalności: narzędzia, ponawianie, typowany wynik
+i zależności. Sięgnij po `direct.model_request`, gdy potrzebujesz tylko surowego żądania do
+modelu z jednolitym API niezależnym od dostawcy. Specyfikacje to z kolei sposób na trzymanie
+samej konfiguracji agenta poza kodem.
+</Callout>
+
 ## Co dalej
 
 Masz już działającego agenta i wiesz, jak go uruchamiać. W następnym rozdziale podłączymy
