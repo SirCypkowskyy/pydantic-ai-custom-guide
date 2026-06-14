@@ -25,6 +25,8 @@
       },
       "correctness": {
         "noUndeclaredVariables": "error",
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error",
         "useExhaustiveDependencies": "warn"
       },
       "style": {
@@ -55,12 +57,43 @@
   },
   "overrides": [
     {
-      "includes": ["src/components/ui/**", "src/components/animate-ui/**"],
+      "includes": [
+        "src/components/ui/**",
+        "src/components/animate-ui/**",
+        "src/hooks/use-mobile.ts",
+        "src/hooks/use-is-in-view.tsx",
+        "src/hooks/use-controlled-state.tsx",
+        "src/hooks/use-auto-height.tsx",
+        "src/hooks/use-data-state.tsx",
+        "src/lib/get-strict-context.tsx",
+        "src/routeTree.gen.ts"
+      ],
       "linter": {
         "rules": {
-          "suspicious": { "noConsole": "off" },
-          "a11y": { "noStaticElementInteractions": "off", "useSemanticElements": "off" },
-          "style": { "noNonNullAssertion": "off" }
+          "recommended": false,
+          "suspicious": {
+            "noConsole": "off",
+            "noExplicitAny": "off",
+            "noArrayIndexKey": "off",
+            "noDocumentCookie": "off"
+          },
+          "a11y": {
+            "noStaticElementInteractions": "off",
+            "useSemanticElements": "off",
+            "useFocusableInteractive": "off"
+          },
+          "style": {
+            "noNonNullAssertion": "off",
+            "useImportType": "off",
+            "noParameterAssign": "off"
+          },
+          "security": { "noDangerouslySetInnerHtml": "off" },
+          "correctness": {
+            "noUnusedImports": "off",
+            "noUnusedVariables": "off",
+            "useHookAtTopLevel": "off",
+            "useExhaustiveDependencies": "off"
+          }
         }
       }
     }

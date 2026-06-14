@@ -1,8 +1,8 @@
 import { copyFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath, URL } from "node:url";
 import mdx from "@mdx-js/rollup";
-import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import tailwindcss from "@tailwindcss/vite";
+import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import rehypePrettyCode from "rehype-pretty-code";
