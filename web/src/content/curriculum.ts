@@ -53,8 +53,8 @@ export const chapters: Chapter[] = [
       en: "Set up an environment with uv, install pydantic-ai, and run your first agent in minutes.",
     },
     docs: [
-      { label: "Installation", url: `${AI}/install` },
-      { label: "Overview", url: `${AI}/overview` },
+      { label: "Installation", url: `${AI}/overview/install` },
+      { label: "Troubleshooting", url: `${AI}/overview/troubleshooting` },
     ],
     sandbox: "01-instalacja",
   },
@@ -70,7 +70,7 @@ export const chapters: Chapter[] = [
       pl: "Czym jest Agent, jak go konfigurować, system prompty, uruchomienia sync, async i strumieniowe.",
       en: "What an Agent is, how to configure it, system prompts, and sync, async, and streaming runs.",
     },
-    docs: [{ label: "Agents", url: `${AI}/agents` }],
+    docs: [{ label: "Agents", url: `${AI}/core-concepts/agent` }],
     sandbox: "02-agenty",
   },
   {
@@ -86,8 +86,8 @@ export const chapters: Chapter[] = [
       en: "Connect different model providers including Ollama Cloud, and learn settings and fallbacks.",
     },
     docs: [
-      { label: "Models", url: `${AI}/models` },
-      { label: "OpenAI-compatible", url: `${AI}/models/openai` },
+      { label: "Models", url: `${AI}/models/overview` },
+      { label: "Ollama", url: `${AI}/models/ollama` },
     ],
     sandbox: "03-modele",
   },
@@ -103,7 +103,7 @@ export const chapters: Chapter[] = [
       pl: "Zmuś model do zwracania danych zgodnych z modelem Pydantic. Walidacja, retry i tryby wyjścia.",
       en: "Make the model return data that matches a Pydantic model. Validation, retries, and output modes.",
     },
-    docs: [{ label: "Output", url: `${AI}/output` }],
+    docs: [{ label: "Output", url: `${AI}/core-concepts/output` }],
     sandbox: "04-structured-output",
   },
   {
@@ -118,7 +118,7 @@ export const chapters: Chapter[] = [
       pl: "Daj agentowi narzędzia: rejestracja, walidacja argumentów, kontekst i obsługa błędów narzędzi.",
       en: "Give the agent tools: registration, argument validation, context, and tool error handling.",
     },
-    docs: [{ label: "Tools", url: `${AI}/tools` }],
+    docs: [{ label: "Tools", url: `${AI}/tools-toolsets/tools` }],
     sandbox: "05-narzedzia",
   },
   {
@@ -133,7 +133,7 @@ export const chapters: Chapter[] = [
       pl: "System wstrzykiwania zależności w pydantic-ai: typowany kontekst, zasoby i testowalność.",
       en: "The dependency injection system in pydantic-ai: typed context, resources, and testability.",
     },
-    docs: [{ label: "Dependencies", url: `${AI}/dependencies` }],
+    docs: [{ label: "Dependencies", url: `${AI}/core-concepts/dependencies` }],
     sandbox: "06-zaleznosci",
   },
   {
@@ -148,7 +148,7 @@ export const chapters: Chapter[] = [
       pl: "Struktura wiadomości, prowadzenie rozmowy wielokrotnej i przekazywanie historii między uruchomieniami.",
       en: "Message structure, multi-turn conversations, and passing history between runs.",
     },
-    docs: [{ label: "Messages", url: `${AI}/message-history` }],
+    docs: [{ label: "Messages", url: `${AI}/core-concepts/message-history` }],
     sandbox: "07-wiadomosci-historia",
   },
   {
@@ -163,7 +163,7 @@ export const chapters: Chapter[] = [
       pl: "Strumieniuj tekst i ustrukturyzowane wyjście w czasie rzeczywistym, z walidacją częściową.",
       en: "Stream text and structured output in real time, with partial validation.",
     },
-    docs: [{ label: "Streaming", url: `${AI}/output#streaming` }],
+    docs: [{ label: "Streaming", url: `${AI}/core-concepts/output#streaming` }],
     sandbox: "08-streaming",
   },
   {
@@ -178,7 +178,7 @@ export const chapters: Chapter[] = [
       pl: "Podłącz agenta do serwerów MCP, korzystaj z zewnętrznych narzędzi i zasobów przez standard.",
       en: "Connect the agent to MCP servers and use external tools and resources through the standard.",
     },
-    docs: [{ label: "MCP", url: `${AI}/mcp` }],
+    docs: [{ label: "MCP", url: `${AI}/mcp/client` }],
     sandbox: "09-mcp",
   },
   {
@@ -194,8 +194,8 @@ export const chapters: Chapter[] = [
       en: "Compose agents, build graphs with pydantic-graph, and learn durable execution.",
     },
     docs: [
-      { label: "Multi-agent", url: `${AI}/multi-agent-applications` },
-      { label: "Graphs", url: `${AI}/graph` },
+      { label: "Multi-agent", url: `${AI}/guides/multi-agent-applications` },
+      { label: "Graphs", url: `${AI}/graph/graph` },
     ],
     sandbox: "10-multi-agent",
   },
@@ -212,8 +212,8 @@ export const chapters: Chapter[] = [
       en: "Test agents without spending on the model, and measure quality with pydantic-evals.",
     },
     docs: [
-      { label: "Testing", url: `${AI}/testing` },
-      { label: "Evals", url: `${AI}/evals` },
+      { label: "Testing", url: `${AI}/guides/testing` },
+      { label: "Evals", url: `${AI}/evals/evals` },
     ],
     sandbox: "11-testy-ewaluacje",
   },
@@ -229,7 +229,7 @@ export const chapters: Chapter[] = [
       pl: "Podłącz Logfire i OpenTelemetry, śledź uruchomienia agenta i przygotuj wdrożenie.",
       en: "Wire up Logfire and OpenTelemetry, trace agent runs, and prepare for deployment.",
     },
-    docs: [{ label: "Logfire / debugging", url: `${AI}/logfire` }],
+    docs: [{ label: "Logfire", url: `${AI}/integrations/logfire` }],
     sandbox: "12-logfire-observability",
   },
   {
@@ -281,7 +281,7 @@ export const chapters: Chapter[] = [
     },
     docs: [
       { label: "FastAPI", url: "https://fastapi.tiangolo.com" },
-      { label: "Pydantic AI", url: `${AI}/overview` },
+      { label: "Pydantic AI", url: `${AI}/core-concepts/agent` },
     ],
     sandbox: "15-fastapi-integracja",
   },
@@ -298,10 +298,10 @@ export const chapters: Chapter[] = [
       en: "Build a faithful Claude-style chat agent: skills and plugins, MCP servers, and a human in the loop approving tool execution.",
     },
     docs: [
-      { label: "Tools", url: `${AI}/tools` },
-      { label: "Deferred tools / HITL", url: `${AI}/deferred-tools` },
-      { label: "MCP", url: `${AI}/mcp` },
-      { label: "Toolsets", url: `${AI}/toolsets` },
+      { label: "Tools", url: `${AI}/tools-toolsets/tools` },
+      { label: "Deferred tools / HITL", url: `${AI}/tools-toolsets/deferred-tools` },
+      { label: "MCP", url: `${AI}/mcp/client` },
+      { label: "Toolsets", url: `${AI}/tools-toolsets/toolsets` },
     ],
     sandbox: "16-asystent-jak-claude",
   },
