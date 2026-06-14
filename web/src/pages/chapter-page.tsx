@@ -1,13 +1,12 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft, ArrowRight, Clock, ExternalLink, FileCode2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Clock } from "lucide-react";
 import { ChapterIcon } from "@/components/chapter-icon";
 import { DifficultyBadge } from "@/components/difficulty-badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { chapterNeighbours, chaptersBySlug } from "@/content/curriculum";
 import { useDocumentMeta } from "@/hooks/use-document-meta";
 import { useLanguage } from "@/hooks/use-language";
-import { site } from "@/lib/site";
+import { ChapterReader } from "@/views/chapter/chapter-reader";
 
 export function ChapterPage({ slug }: { slug: string }) {
   const { lang, t } = useLanguage();
@@ -23,7 +22,7 @@ export function ChapterPage({ slug }: { slug: string }) {
   if (!chapter) {
     return (
       <div className="mx-auto max-w-2xl px-5 py-24 text-center">
-        <p className="font-display text-5xl font-semibold text-primary">404</p>
+        <p className="font-display text-6xl font-semibold text-primary">404</p>
         <p className="mt-3 text-muted-foreground">
           {lang === "pl" ? "Nie znaleziono rozdziału." : "Chapter not found."}
         </p>
@@ -71,55 +70,7 @@ export function ChapterPage({ slug }: { slug: string }) {
         </div>
       </header>
 
-      <div className="grid gap-10 py-10 lg:grid-cols-[1fr_16rem]">
-        <div className="min-w-0">
-          <Card className="border-dashed bg-muted/30 p-8 text-center text-muted-foreground">
-            {lang === "pl"
-              ? "Treść tego rozdziału jest w przygotowaniu."
-              : "The content of this chapter is being prepared."}
-          </Card>
-        </div>
-
-        <aside className="space-y-6 lg:sticky lg:top-20 lg:self-start">
-          <div>
-            <h2 className="mb-2 font-semibold text-sm uppercase tracking-wide text-muted-foreground">
-              {t("common.sourceDocs")}
-            </h2>
-            <ul className="space-y-1.5">
-              {chapter.docs.map((doc) => (
-                <li key={doc.url}>
-                  <a
-                    href={doc.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
-                  >
-                    <ExternalLink className="size-3.5" />
-                    {doc.label}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {chapter.sandbox ? (
-            <div>
-              <h2 className="mb-2 font-semibold text-sm uppercase tracking-wide text-muted-foreground">
-                {t("common.runnable")}
-              </h2>
-              <a
-                href={`${site.sandboxUrl}/${chapter.sandbox}`}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
-              >
-                <FileCode2 className="size-3.5" />
-                sandbox/{chapter.sandbox}
-              </a>
-            </div>
-          ) : null}
-        </aside>
-      </div>
+      <ChapterReader chapter={chapter} />
 
       <nav className="flex items-center justify-between gap-4 border-t pt-8">
         {prev ? (

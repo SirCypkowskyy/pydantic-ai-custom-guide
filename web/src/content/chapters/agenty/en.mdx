@@ -1,0 +1,175 @@
+The Agent is the central piece of Pydantic AI. It is a single object that ties a language
+model, instructions, tools, and an output type into one reusable whole. If you have used
+FastAPI before, this will feel familiar: you define the agent once and run it from many
+places in your application.
+
+## What an Agent actually is
+
+A good mental model is a class, or a FastAPI app. You create it once, usually as a
+module-level constant, and use it for the lifetime of the program. An Agent gathers
+several things at once:
+
+- the model it uses (for example `openai:gpt-5.2`),
+- <Term definition="Instructions tell the model how to behave. In Pydantic AI this is usually the instructions parameter.">instructions</Term>, the description of how it should behave,
+- optional tools the model can call,
+- the <Term definition="The output is the structured result the agent returns. It defaults to plain text but can be a Pydantic model.">output</Term> type you expect,
+- a dependencies type, if you use one.
+
+<Callout kind="key">
+An Agent is generic in two types: the dependencies type and the output type. Because of
+that, your editor and type checker know exactly what to expect from `result.output` and
+what lands in `ctx.deps`. This typed nature is why the whole thing is called "the Pydantic
+way of building agents".
+</Callout>
+
+## Your first agent
+
+The simplest possible agent needs only a model. Everything else has sensible defaults.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="Answer concisely, in a single sentence.",
+)
+
+result = agent.run_sync("Where does the name Pydantic AI come from?")
+print(result.output)
+#> It combines the Pydantic library with building AI agents.
+```
+
+The first argument is a model identifier in the `provider:name` format. The `instructions`
+parameter describes how the agent should behave. The result has an `output` field, which
+here is plain text.
+
+## How a run flows
+
+When you call `run_sync`, a few steps happen in order. The agent builds a list of messages,
+sends it to the model, and then processes the response. If tools are involved, the loop can
+repeat before a final result appears.
+
+<RunFlow
+  title="The flow of a single agent run"
+  nodes={[
+    { kind: "user", label: "Prompt", detail: "text from the user" },
+    { kind: "agent", label: "Agent", detail: "builds messages" },
+    { kind: "model", label: "Model", detail: "generates a reply" },
+    { kind: "output", label: "Output", detail: "result.output" },
+  ]}
+/>
+
+## Four ways to run an agent
+
+Pydantic AI gives you four methods to run an agent. They all take the same set of arguments
+and differ only in how they hand back the result.
+
+| Method | Returns | When to use |
+| --- | --- | --- |
+| `run_sync()` | a finished result | scripts, tests, synchronous code |
+| `run()` | a coroutine with the result | async code, such as a server |
+| `run_stream()` | a stream of chunks | when you want to show text as it arrives |
+| `run_stream_events()` | a stream of events | when you need insight into every step |
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+
+agent = Agent("openai:gpt-5.2")
+
+
+async def main() -> None:
+    # The async version
+    result = await agent.run("What is the capital of Poland?")
+    print(result.output)
+    #> The capital of Poland is Warsaw.
+
+    # Streaming text in real time
+    async with agent.run_stream("Name three cities in Poland.") as response:
+        async for chunk in response.stream_text():
+            print(chunk)
+
+
+asyncio.run(main())
+```
+
+## Instructions versus system prompt
+
+Pydantic AI separates two ideas that are easy to mix up. `instructions` is the default and
+recommended choice. `system_prompt` exists mainly for backward compatibility and differs in
+one important detail.
+
+<Callout kind="note">
+Instructions are not added to the message history passed between runs. A system prompt is.
+So when you build a multi-turn conversation and pass earlier messages forward, the current
+agent's `instructions` still apply, and old system prompts do not sneak back in.
+</Callout>
+
+Both forms can be static or dynamic. You define dynamic ones with a decorator, and they have
+access to `RunContext`, so they can depend on data passed through `deps`.
+
+```python
+from datetime import date
+
+from pydantic_ai import Agent, RunContext
+
+agent = Agent(
+    "openai:gpt-5.2",
+    deps_type=str,
+    instructions="Address the user by their name.",
+)
+
+
+@agent.instructions
+def add_the_name(ctx: RunContext[str]) -> str:
+    return f"The user's name is {ctx.deps}."
+
+
+@agent.instructions
+def add_the_date() -> str:
+    return f"Today's date is {date.today().isoformat()}."
+
+
+result = agent.run_sync("What day is it?", deps="Frank")
+print(result.output)
+#> Hi Frank, today is the 2nd of January.
+```
+
+## Anatomy of an agent
+
+The diagram below shows what an agent holds inside and how those parts connect during a run.
+
+<Mermaid
+  caption="The parts a single Agent ties together"
+  chart={`flowchart TD
+    A[Agent] --> M[Model]
+    A --> I[Instructions]
+    A --> T[Tools]
+    A --> O[Output type]
+    A --> D[Dependencies]
+    I -->|static and dynamic| R((RunContext))
+    T -->|access to| R
+    D -->|injected by| R`}
+/>
+
+## RunContext in a nutshell
+
+`RunContext` is the object passed to dynamic instructions and tools. It gives access to
+dependencies through `ctx.deps`, and to information about the current run, such as token
+usage or the messages so far. Dependencies get their own chapter, because they are what make
+agents genuinely testable.[^deps]
+
+<Callout kind="tip">
+Start with the simplest version: a model plus one sentence of instructions. Add tools, a
+typed output, and dependencies only when you actually need them. Each of those gets its own
+chapter in this guide.
+</Callout>
+
+## What is next
+
+You now have a working agent and know how to run it. In the next chapter we connect different
+model providers, including Ollama Cloud, which we use to test the examples in the `sandbox`
+directory. The runnable code for this chapter lives in `sandbox/02-agenty`.
+
+[^deps]: Dependency injection is covered in the "Dependencies (DI)" chapter.
