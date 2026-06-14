@@ -11,7 +11,7 @@ import os
 
 import pytest
 
-from pai_sandbox_shared import load_env
+from pai_sandbox_shared import load_env, load_main
 
 load_env()
 
@@ -25,9 +25,8 @@ requires_key = pytest.mark.skipif(
 def test_pipeline_produces_draft() -> None:
     """The graph should fill state with points and return a non-empty draft."""
     # Imported lazily so test collection stays green without an API key.
-    from main import Article, Research, pipeline  # noqa: PLC0415
-
-    state = Article(topic="Czym jest agent w Pydantic AI?")
-    result = pipeline.run_sync(Research(), state=state)
+    main = load_main(__file__)
+    state = main.Article(topic="Czym jest agent w Pydantic AI?")
+    result = main.pipeline.run_sync(main.Research(), state=state)
     assert state.points
     assert result.output.strip()

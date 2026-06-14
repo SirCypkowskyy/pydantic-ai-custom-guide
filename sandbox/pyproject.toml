@@ -14,6 +14,11 @@ pai-sandbox-shared = { workspace = true }
 [dependency-groups]
 dev = ["ruff>=0.9", "basedpyright>=1.21", "pytest>=8"]
 
+[tool.pytest.ini_options]
+# Each example has its own main.py / smoke_test.py; importlib mode keeps the
+# same-named modules from colliding when the whole suite runs together.
+addopts = "--import-mode=importlib"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

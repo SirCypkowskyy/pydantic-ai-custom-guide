@@ -33,6 +33,7 @@ MODEL = ollama_model("qwen3-coder:480b")
 bullet_agent = Agent(
     MODEL,
     output_type=list[str],
+    retries=3,
     instructions="Zwróć krótkie hasła. Każde hasło to jeden zwięzły punkt po polsku.",
 )
 

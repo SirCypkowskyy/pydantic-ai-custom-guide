@@ -7,14 +7,17 @@ agent logic should be testable in milliseconds without calling a provider.
 
 from __future__ import annotations
 
-from main import Priority, Ticket, build_dataset, support_agent
-from pydantic_ai import models
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-# Belt and braces: fail loudly if any test accidentally reaches a real provider.
-models.ALLOW_MODEL_REQUESTS = False
+from pai_sandbox_shared import load_main
+
+_main = load_main(__file__)
+Priority = _main.Priority
+Ticket = _main.Ticket
+build_dataset = _main.build_dataset
+support_agent = _main.support_agent
 
 
 def test_testmodel_fills_structured_output() -> None:

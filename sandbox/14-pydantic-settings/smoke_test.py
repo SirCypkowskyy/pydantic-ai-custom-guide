@@ -8,12 +8,14 @@ those settings answers when driven by ``TestModel`` instead of a real model.
 from __future__ import annotations
 
 import pytest
-from main import AppSettings, build_agent
 from pydantic_ai.models.test import TestModel
 
-from pai_sandbox_shared import load_env
+from pai_sandbox_shared import load_env, load_main
 
 load_env()
+_main = load_main(__file__)
+AppSettings = _main.AppSettings
+build_agent = _main.build_agent
 
 
 @pytest.fixture

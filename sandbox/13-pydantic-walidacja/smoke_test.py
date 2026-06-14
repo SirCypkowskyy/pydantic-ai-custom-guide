@@ -10,14 +10,16 @@ from __future__ import annotations
 import os
 
 import pytest
-from main import Order, OrderIds
 from pydantic import ValidationError
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from pai_sandbox_shared import load_env, ollama_model
+from pai_sandbox_shared import load_env, load_main, ollama_model
 
 load_env()
+_main = load_main(__file__)
+Order = _main.Order
+OrderIds = _main.OrderIds
 
 requires_key = pytest.mark.skipif(
     not os.getenv("OLLAMA_CLOUD_API_KEY"),

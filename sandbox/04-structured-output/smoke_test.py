@@ -33,7 +33,7 @@ class CityLocation(BaseModel):
 @requires_key
 def test_structured_output() -> None:
     agent = Agent(
-        ollama_model(),
+        ollama_model("qwen3-coder:480b"),
         output_type=CityLocation,
         instructions="Return the city and country.",
     )

@@ -30,7 +30,7 @@ class CityFact(BaseModel):
 
 # The simplest case: a Pydantic model as output_type. ``result.output`` is a CityFact.
 city_agent = Agent(
-    ollama_model(),
+    ollama_model("qwen3-coder:480b"),
     output_type=CityFact,
     instructions="Wypełnij dane o mieście. Populację podaj liczbowo, w milionach.",
 )
@@ -54,7 +54,7 @@ class Recipe(BaseModel):
 # OpenAI-compatible endpoint because it asks for JSON in the prompt rather than relying
 # on a provider-specific structured-output feature.
 router_agent = Agent(
-    ollama_model(),
+    ollama_model("qwen3-coder:480b"),
     output_type=PromptedOutput(
         [Weather, Recipe],
         name="WeatherOrRecipe",
@@ -67,7 +67,7 @@ router_agent = Agent(
 # Validation: a model can return well-typed but nonsensical data. An output validator
 # raises ModelRetry to tell the model what was wrong and let it correct itself.
 validated_agent = Agent(
-    ollama_model(),
+    ollama_model("qwen3-coder:480b"),
     output_type=CityFact,
     instructions="Podaj prawdziwe dane o mieście.",
 )
