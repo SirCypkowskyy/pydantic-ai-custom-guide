@@ -1,0 +1,83 @@
+import type { pl } from "./pl";
+
+/** English mirrors the Polish key set exactly; the type enforces it. */
+export const en: Record<keyof typeof pl, string> = {
+  "lang.name": "English",
+  "lang.switchTo": "Polski",
+
+  "nav.home": "Home",
+  "nav.chapters": "Chapters",
+  "nav.progress": "Progress",
+  "nav.playground": "Playground",
+  "nav.about": "About",
+  "nav.sourceDocs": "Source docs",
+
+  "theme.toggle": "Toggle theme",
+  "theme.light": "Light",
+  "theme.dark": "Dark",
+  "theme.system": "System",
+
+  "sidebar.curriculum": "Curriculum",
+  "sidebar.progressRing": "Completed",
+  "sidebar.search": "Search chapters",
+
+  "common.next": "Next",
+  "common.previous": "Previous",
+  "common.readMore": "Read more",
+  "common.minutes": "min read",
+  "common.difficulty": "Level",
+  "common.updated": "Updated",
+  "common.onThisPage": "On this page",
+  "common.sourceDocs": "Source documentation",
+  "common.runnable": "Runnable example",
+  "common.openInGitHub": "Open on GitHub",
+
+  "difficulty.intro": "Intro",
+  "difficulty.intermediate": "Intermediate",
+  "difficulty.advanced": "Advanced",
+
+  "quiz.title": "Check yourself",
+  "quiz.subtitle": "A short end-of-chapter quiz. Your score is saved locally.",
+  "quiz.start": "Start the quiz",
+  "quiz.question": "Question",
+  "quiz.of": "of",
+  "quiz.check": "Check",
+  "quiz.next": "Next question",
+  "quiz.finish": "Finish",
+  "quiz.retry": "Try again",
+  "quiz.correct": "Correct!",
+  "quiz.incorrect": "Not quite",
+  "quiz.yourScore": "Your score",
+  "quiz.bestScore": "Best score",
+  "quiz.passed": "Chapter passed",
+  "quiz.review": "Review answers",
+  "quiz.explanation": "Explanation",
+
+  "progress.title": "Your progress",
+  "progress.subtitle": "Everything is saved in this browser. You can export it.",
+  "progress.overall": "Course completion",
+  "progress.chaptersDone": "Chapters completed",
+  "progress.avgScore": "Average score",
+  "progress.streak": "Day streak",
+  "progress.export": "Export",
+  "progress.import": "Import",
+  "progress.reset": "Reset progress",
+  "progress.planner": "Study plan",
+  "progress.empty": "Start the first chapter to see your results here.",
+
+  "comments.title": "Comments",
+  "comments.subtitle": "Discussion runs on giscus and GitHub Discussions.",
+
+  "home.hero.kicker": "The guide - June 2026",
+  "home.hero.titleLead": "Learn",
+  "home.hero.titleEm": "Pydantic AI",
+  "home.hero.titleTail": "from basics to production",
+  "home.hero.subtitle":
+    "Agents, tools, typed outputs, models, MCP, and deployment. In Polish and English, with runnable Python examples.",
+  "home.hero.cta": "Start with the intro",
+  "home.hero.ctaSecondary": "See the curriculum",
+
+  "footer.builtWith": "Built with",
+  "footer.sourceOnGitHub": "Source on GitHub",
+  "footer.notAffiliated": "An unofficial community guide.",
+};
