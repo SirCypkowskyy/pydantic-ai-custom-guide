@@ -9,38 +9,128 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ProgressRouteImport } from './routes/progress'
+import { Route as PlaygroundRouteImport } from './routes/playground'
+import { Route as AboutRouteImport } from './routes/about'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ChaptersIndexRouteImport } from './routes/chapters/index'
+import { Route as ChaptersSlugRouteImport } from './routes/chapters/$slug'
 
+const ProgressRoute = ProgressRouteImport.update({
+  id: '/progress',
+  path: '/progress',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PlaygroundRoute = PlaygroundRouteImport.update({
+  id: '/playground',
+  path: '/playground',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AboutRoute = AboutRouteImport.update({
+  id: '/about',
+  path: '/about',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ChaptersIndexRoute = ChaptersIndexRouteImport.update({
+  id: '/chapters/',
+  path: '/chapters/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ChaptersSlugRoute = ChaptersSlugRouteImport.update({
+  id: '/chapters/$slug',
+  path: '/chapters/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
+  '/playground': typeof PlaygroundRoute
+  '/progress': typeof ProgressRoute
+  '/chapters/$slug': typeof ChaptersSlugRoute
+  '/chapters/': typeof ChaptersIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
+  '/playground': typeof PlaygroundRoute
+  '/progress': typeof ProgressRoute
+  '/chapters/$slug': typeof ChaptersSlugRoute
+  '/chapters': typeof ChaptersIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
+  '/playground': typeof PlaygroundRoute
+  '/progress': typeof ProgressRoute
+  '/chapters/$slug': typeof ChaptersSlugRoute
+  '/chapters/': typeof ChaptersIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/about'
+    | '/playground'
+    | '/progress'
+    | '/chapters/$slug'
+    | '/chapters/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/about'
+    | '/playground'
+    | '/progress'
+    | '/chapters/$slug'
+    | '/chapters'
+  id:
+    | '__root__'
+    | '/'
+    | '/about'
+    | '/playground'
+    | '/progress'
+    | '/chapters/$slug'
+    | '/chapters/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AboutRoute: typeof AboutRoute
+  PlaygroundRoute: typeof PlaygroundRoute
+  ProgressRoute: typeof ProgressRoute
+  ChaptersSlugRoute: typeof ChaptersSlugRoute
+  ChaptersIndexRoute: typeof ChaptersIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/progress': {
+      id: '/progress'
+      path: '/progress'
+      fullPath: '/progress'
+      preLoaderRoute: typeof ProgressRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/playground': {
+      id: '/playground'
+      path: '/playground'
+      fullPath: '/playground'
+      preLoaderRoute: typeof PlaygroundRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/about': {
+      id: '/about'
+      path: '/about'
+      fullPath: '/about'
+      preLoaderRoute: typeof AboutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -48,11 +138,30 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/chapters/': {
+      id: '/chapters/'
+      path: '/chapters'
+      fullPath: '/chapters/'
+      preLoaderRoute: typeof ChaptersIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/chapters/$slug': {
+      id: '/chapters/$slug'
+      path: '/chapters/$slug'
+      fullPath: '/chapters/$slug'
+      preLoaderRoute: typeof ChaptersSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AboutRoute: AboutRoute,
+  PlaygroundRoute: PlaygroundRoute,
+  ProgressRoute: ProgressRoute,
+  ChaptersSlugRoute: ChaptersSlugRoute,
+  ChaptersIndexRoute: ChaptersIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
