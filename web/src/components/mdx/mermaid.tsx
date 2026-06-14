@@ -1,5 +1,9 @@
 import { useTheme } from "next-themes";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+// Monotonic id so each render uses a unique mermaid id. Reusing an id makes mermaid's
+// temporary measurement nodes collide, which renders the diagram doubled and offset.
+let renderSeq = 0;
 
 /**
  * Renders a Mermaid diagram, re-rendering on theme change. Mermaid is imported lazily so
@@ -7,12 +11,14 @@ import { useEffect, useId, useRef, useState } from "react";
  */
 export function Mermaid({ chart, caption }: { chart: string; caption?: string }) {
   const { resolvedTheme } = useTheme();
-  const rawId = useId().replace(/[^a-zA-Z0-9]/g, "");
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    const el = ref.current;
+    setError(null);
+
     void (async () => {
       try {
         const mermaid = (await import("mermaid")).default;
@@ -22,16 +28,19 @@ export function Mermaid({ chart, caption }: { chart: string; caption?: string })
           fontFamily: "Geist, sans-serif",
           securityLevel: "strict",
         });
-        const { svg } = await mermaid.render(`m${rawId}`, chart);
-        if (!cancelled && ref.current) ref.current.innerHTML = svg;
+        renderSeq += 1;
+        const { svg } = await mermaid.render(`mmd-${renderSeq}`, chart);
+        if (!cancelled && el) el.innerHTML = svg;
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "diagram error");
       }
     })();
+
     return () => {
       cancelled = true;
+      if (el) el.innerHTML = "";
     };
-  }, [chart, resolvedTheme, rawId]);
+  }, [chart, resolvedTheme]);
 
   if (error) {
     return <pre className="my-6 rounded-lg border border-destructive/40 p-4 text-xs">{error}</pre>;

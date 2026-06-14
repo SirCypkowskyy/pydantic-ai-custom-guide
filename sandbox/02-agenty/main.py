@@ -46,13 +46,13 @@ def add_user_name(ctx: RunContext[User]) -> str:
 
 
 def run_basic() -> None:
-    """Synchronous run with ``run_sync``."""
+    """Run synchronously with ``run_sync``."""
     basic = basic_agent.run_sync("Skąd wzięła się nazwa Pydantic AI?")
     print("Basic:", basic.output)
 
 
 async def run_personal() -> None:
-    """Async run with ``run`` and typed dependencies."""
+    """Run asynchronously with ``run`` and typed dependencies."""
     personal = await personal_agent.run("Przywitaj się ze mną.", deps=User(name="Franek"))
     print("Personal:", personal.output)
 

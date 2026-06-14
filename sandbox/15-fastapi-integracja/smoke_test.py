@@ -9,9 +9,8 @@ with no ``OLLAMA_CLOUD_API_KEY`` configured.
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
-from pydantic_ai.models.test import TestModel
-
 from main import build_app, stream_agent, support_agent
+from pydantic_ai.models.test import TestModel
 
 from pai_sandbox_shared import load_env
 

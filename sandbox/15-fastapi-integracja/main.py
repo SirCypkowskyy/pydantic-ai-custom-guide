@@ -79,8 +79,7 @@ support_agent = Agent(
     deps_type=SupportDeps,
     output_type=TicketAnswer,
     instructions=(
-        "Jesteś asystentem wsparcia technicznego. Odpowiadaj po polsku, "
-        "rzeczowo i krótko."
+        "Jesteś asystentem wsparcia technicznego. Odpowiadaj po polsku, rzeczowo i krótko."
     ),
 )
 
