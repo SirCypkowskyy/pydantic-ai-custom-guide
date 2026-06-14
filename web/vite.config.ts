@@ -44,7 +44,14 @@ function buildSitemap(): string {
     "utf8",
   );
   const slugs = [...curriculum.matchAll(/slug:\s*"([^"]+)"/g)].map((m) => m[1]);
-  const paths = ["", "chapters", "progress", "playground", "about", ...slugs.map((s) => `chapters/${s}`)];
+  const paths = [
+    "",
+    "chapters",
+    "progress",
+    "playground",
+    "about",
+    ...slugs.map((s) => `chapters/${s}`),
+  ];
   const urls = paths
     .map((p) => `  <url><loc>${SITE_URL}/${p}</loc><changefreq>weekly</changefreq></url>`)
     .join("\n");

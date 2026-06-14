@@ -19,7 +19,7 @@ export function Mermaid({ chart, caption }: { chart: string; caption?: string })
         mermaid.initialize({
           startOnLoad: false,
           theme: resolvedTheme === "dark" ? "dark" : "neutral",
-          fontFamily: "Hanken Grotesk, sans-serif",
+          fontFamily: "Geist, sans-serif",
           securityLevel: "strict",
         });
         const { svg } = await mermaid.render(`m${rawId}`, chart);

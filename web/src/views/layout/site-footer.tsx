@@ -36,6 +36,12 @@ export function SiteFooter() {
             {t("nav.playground")}
           </Link>
           <a
+            href={`${import.meta.env.BASE_URL}llms.txt`}
+            className="text-muted-foreground transition-colors hover:text-foreground"
+          >
+            llms.txt
+          </a>
+          <a
             href={site.repoUrl}
             target="_blank"
             rel="noreferrer"
