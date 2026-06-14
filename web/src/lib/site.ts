@@ -4,7 +4,7 @@
  */
 
 export const site = {
-  name: "Pydantic AI - Przewodnik",
+  name: "Cyprian's Pydantic AI Guide",
   shortName: "Pydantic AI Guide",
   description: "Kompletny dwujęzyczny przewodnik po Pydantic AI - czerwiec 2026.",
   repo: "SirCypkowskyy/pydantic-ai-custom-guide",

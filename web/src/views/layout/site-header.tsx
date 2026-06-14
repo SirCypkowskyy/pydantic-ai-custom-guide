@@ -1,4 +1,4 @@
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AnimateIcon } from "@/components/animate-ui/icons/icon";
 import { Search } from "@/components/animate-ui/icons/search";
@@ -57,6 +57,14 @@ export function SiteHeader() {
       </AnimateIcon>
 
       <div className="ml-auto flex items-center gap-1.5">
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className="hidden text-muted-foreground sm:inline-flex"
+        >
+          <Link to="/about">{t("nav.about")}</Link>
+        </Button>
         <LanguageToggle />
         <ThemeToggle />
         <Button asChild variant="ghost" size="icon" className="text-muted-foreground">

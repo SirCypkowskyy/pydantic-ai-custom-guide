@@ -37,8 +37,8 @@ export function AppSidebar() {
           onClick={() => setOpenMobile(false)}
         >
           <BrandLogo withWordmark={false} className="group-data-[collapsible=icon]:mx-auto" />
-          <span className="font-display text-base font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
-            Pydantic<span className="text-primary"> AI</span>
+          <span className="font-display text-sm font-semibold leading-tight tracking-tight group-data-[collapsible=icon]:hidden">
+            Cyprian's Pydantic<span className="text-primary"> AI</span> Guide
           </span>
         </Link>
       </SidebarHeader>

@@ -140,8 +140,8 @@ export function AboutPage() {
         </h2>
         <p className="mt-3 text-foreground/85 leading-relaxed">
           {pl
-            ? "Cały kod (aplikacja i przykłady w /sandbox) jest otwarty."
-            : "All the code (the app and the /sandbox examples) is open source."}
+            ? "Cały kod (aplikacja i przykłady w /sandbox) jest otwarty na licencji MIT."
+            : "All the code (the app and the /sandbox examples) is open source under the MIT license."}
         </p>
         <a
           href={site.repoUrl}

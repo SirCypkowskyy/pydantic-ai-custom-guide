@@ -67,4 +67,5 @@ każdego rozdziału pod `/chapters/<slug>.md`, zgodnie z [llmstxt.org](https://l
 
 ## Licencja
 
-Nieoficjalny przewodnik społecznościowy. Kod źródłowy otwarty.
+Nieoficjalny przewodnik społecznościowy. Kod na licencji [MIT](LICENSE).
+Autor: [Cyprian Gburek](https://gburek.dev) (SirCypkowskyy). Powstał z asystą Claude Code i Opusa.

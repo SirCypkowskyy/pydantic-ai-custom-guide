@@ -38,8 +38,8 @@ export function BrandLogo({ className, withWordmark = true }: BrandLogoProps) {
         />
       </svg>
       {withWordmark ? (
-        <span className="font-display text-lg leading-none font-semibold tracking-tight">
-          Pydantic<span className="text-primary"> AI</span>
+        <span className="font-display text-base leading-tight font-semibold tracking-tight">
+          Cyprian's Pydantic<span className="text-primary"> AI</span> Guide
         </span>
       ) : null}
     </span>
