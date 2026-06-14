@@ -1,0 +1,241 @@
+Agents need tests like any other code, but a real model costs money, runs slowly, and never
+returns the same answer twice. That is why Pydantic AI ships two stand-in models that run
+locally, with no network and no API key. For unit tests you swap the real model for a stub,
+and for measuring quality you reach for a separate package, `pydantic-evals`.
+
+This chapter separates two things that are easy to confuse. Tests check that the code around
+the agent is correct: that tools get called, that the output has the right shape. Evals
+measure whether the model's answers are any good. The first should be fast and
+deterministic; the second is soft by nature.
+
+## Why we do not test against the real model
+
+A unit test should be fast, repeatable, and free. A real model breaks all three rules at
+once. <Term definition="TestModel is a built-in stub model that does not connect to the network. It produces simple deterministic responses and automatically calls every tool the agent has.">TestModel</Term>
+fixes this by pretending to be a model: it never leaves the process, it calls each of the
+agent's tools in turn, and it returns a predictable output. That way you test the control
+flow, not the model's intelligence.
+
+<Callout kind="key">
+Tests and evals answer different questions. A test asks "does my code do what it should". An
+eval asks "are the model's answers good enough". The first must be deterministic; the second
+cannot be made so, so keep them in separate places.
+</Callout>
+
+## TestModel and agent.override
+
+The heart of testing is `agent.override(model=...)`. It swaps the model inside a `with`
+block, so production code stays untouched and the test agent uses the stub. You do not need
+to change the agent definition or pass the model in as an argument.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+
+agent = Agent("openai:gpt-5.2", instructions="Answer concisely.")
+
+
+def test_agent_runs_offline() -> None:
+    with agent.override(model=TestModel()):
+        result = agent.run_sync("Whatever I type here never hits the network.")
+    # TestModel returns a simple, deterministic response.
+    assert isinstance(result.output, str)
+    assert result.output
+```
+
+`TestModel` automatically calls every tool registered on the agent, guessing arguments from
+the type hints. That verifies the tools can be called at all and that their signatures hold
+together. If you set `output_type` to a Pydantic model, `TestModel` builds a sample object
+of that type.
+
+<RunFlow
+  title="A test with the model overridden"
+  nodes={[
+    { kind: "user", label: "Test", detail: "calls run_sync" },
+    { kind: "agent", label: "Agent", detail: "override(TestModel)" },
+    { kind: "model", label: "TestModel", detail: "no network" },
+    { kind: "tool", label: "Tools", detail: "called automatically" },
+    { kind: "output", label: "Assertion", detail: "output shape" },
+  ]}
+/>
+
+## FunctionModel when you need control
+
+`TestModel` is convenient but dumb: you do not control what it answers. When you want to
+force a specific response or a specific tool call, you reach for
+<Term definition="FunctionModel lets you write a plain Python function that decides what the model replies based on the messages it receives. It gives full control over behavior in a test.">FunctionModel</Term>.
+You write a function that receives the messages and builds the model response itself.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+agent = Agent("openai:gpt-5.2")
+
+
+def always_fixed(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(content="A fixed answer for the test.")])
+
+
+def test_forced_response() -> None:
+    with agent.override(model=FunctionModel(always_fixed)):
+        result = agent.run_sync("Question that does not matter.")
+    assert result.output == "A fixed answer for the test."
+```
+
+A rule of thumb: use `TestModel` when you only want the agent to walk the whole loop. Use
+`FunctionModel` when you have to reproduce a specific scenario, for example a model that
+first calls a tool and then summarizes the result.
+
+## capture_run_messages
+
+Sometimes asserting on `result.output` alone is not enough. You want to check that the agent
+actually called a given tool, or how many rounds went to the model. `capture_run_messages`
+records every message exchanged during a run.
+
+```python
+from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.models.test import TestModel
+
+agent = Agent("openai:gpt-5.2")
+
+
+@agent.tool_plain
+def square_area(side: int) -> int:
+    return side * side
+
+
+def test_tool_was_called() -> None:
+    with capture_run_messages() as messages:
+        with agent.override(model=TestModel()):
+            agent.run_sync("Compute the area of a square with side 6.")
+
+    calls = [
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert any(call.tool_name == "square_area" for call in calls)
+```
+
+<Callout kind="tip">
+`capture_run_messages` also helps when debugging errors. When an agent raises
+`UnexpectedModelBehavior`, the captured messages show exactly where the tool loop got stuck
+and what arguments the model tried to pass.
+</Callout>
+
+## Evals with pydantic-evals
+
+Tests say "the code works". They do not say "the answers are good". That is the job of a
+separate package, `pydantic-evals`. With it you build a <Term definition="A Dataset is a collection of test cases (Case) together with evaluators. You run it against a function or agent and get back a report of scores.">Dataset</Term>
+made of cases (`Case`) and evaluators, then run it against your function.
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext, IsInstance
+
+
+class MatchedCity(Evaluator[str, str]):
+    def evaluate(self, ctx: EvaluatorContext[str, str]) -> float:
+        if ctx.output == ctx.expected_output:
+            return 1.0
+        if ctx.expected_output.lower() in ctx.output.lower():
+            return 0.8
+        return 0.0
+
+
+dataset = Dataset(
+    name="capitals",
+    cases=[
+        Case(
+            name="france",
+            inputs="What is the capital of France?",
+            expected_output="Paris",
+            metadata={"difficulty": "easy"},
+        ),
+    ],
+    evaluators=[IsInstance(type_name="str"), MatchedCity()],
+)
+
+
+async def guess_city(question: str) -> str:
+    return "Paris"
+
+
+report = dataset.evaluate_sync(guess_city)
+report.print(include_input=True, include_output=True)
+```
+
+`evaluate_sync` runs each case through the given function and passes the result through the
+evaluators. Each evaluator returns a numeric score or an assertion, and `report.print`
+assembles it into a table. The scored function can be a plain function or a thin wrapper that
+calls `agent.run` and returns `result.output`.[^golden]
+
+## LLMJudge for soft criteria
+
+Sometimes you cannot write an exact assertion because a "good answer" is a matter of tone or
+completeness. Then you use `LLMJudge`, which scores the output against a rubric you write in
+plain English. This is the one moment in testing where we deliberately go back to a real
+model, because the model is the judge.
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import LLMJudge
+
+dataset = Dataset(
+    name="customer_support",
+    cases=[
+        Case(
+            name="refund_request",
+            inputs={"query": "I want my money back", "order_id": "12345"},
+            evaluators=[
+                LLMJudge(
+                    rubric=(
+                        "Response should acknowledge the request empathetically, "
+                        "ask for the reason, and mention the 30-day refund policy."
+                    ),
+                    include_input=True,
+                ),
+            ],
+        ),
+    ],
+)
+```
+
+<Callout kind="warning">
+`LLMJudge` calls a real model, so it costs money and can be flaky. Keep it in a slower eval
+suite, not in the fast unit tests you run on every commit. Mixing the two worlds slows the
+whole test grid down.
+</Callout>
+
+## Where each thing belongs
+
+<Mermaid
+  caption="The split between fast tests and slower evals"
+  chart={`flowchart TD
+    K[Code change] --> T[Unit tests]
+    T -->|TestModel| TM[Flow and tools]
+    T -->|FunctionModel| FM[Specific scenarios]
+    T -->|capture_run_messages| CM[Message checks]
+    K --> E[Evals with pydantic-evals]
+    E -->|Dataset and Case| D[Set of cases]
+    E -->|evaluators| EV[Scores and assertions]
+    EV -->|LLMJudge| J[Soft criteria]`}
+/>
+
+You run the fast, deterministic tests on every commit. You run evals, especially the ones
+with `LLMJudge`, less often, because they are slow and they cost money. That split keeps the
+day-to-day work cheap while still keeping the model's quality under control.
+
+## What is next
+
+You can now test an agent without spending a cent and measure the quality of its answers. In
+the next chapter we turn to observability with Logfire, to see what happens in production.
+The runnable code for this chapter, including a smoke test built on `TestModel` that never
+needs the network, lives in `sandbox/11-testy-ewaluacje`.
+
+[^golden]: A well-chosen set of cases with expected outputs is sometimes called a "golden
+dataset", and it is treated as a regression safety net for the model's quality.

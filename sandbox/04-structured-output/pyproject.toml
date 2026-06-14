@@ -1,0 +1,6 @@
+[project]
+name = "ch04-structured-output"
+version = "0.1.0"
+description = "Chapter 4: Structured output - typed results instead of free-form text."
+requires-python = ">=3.12"
+dependencies = ["pydantic-ai>=1.0", "pai-sandbox-shared"]

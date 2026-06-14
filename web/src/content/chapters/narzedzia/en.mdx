@@ -1,0 +1,170 @@
+A model on its own can only write text. Tools change that completely: they give an agent
+a way to reach for data, compute something precisely, or take an action in the world. The
+model does not call a function directly. Instead it asks for one to run, and Pydantic AI
+validates the arguments, calls your code, and feeds the result back to the model.
+
+In this chapter we register tools in two ways, see how arguments validate from type hints,
+and handle errors so the model can correct itself.
+
+## What a tool is
+
+A <Term definition="A tool is an ordinary Python function you register on an agent that the model can ask to call during a run.">tool</Term> is just a function you expose to the model. Pydantic AI takes its signature
+and docstring and builds a schema that it sends to the model. When the model decides a tool
+is needed, it returns the tool's name and arguments. The framework validates those arguments
+against the type hints, runs the function, and puts the result back into the conversation.
+
+<Callout kind="key">
+The model never executes your code. It only decides that a tool should be called and with
+which arguments. Everything else, the validation, the call, and error handling, is done by
+Pydantic AI on your side.
+</Callout>
+
+## Two decorators: tool and tool_plain
+
+There are two ways to register a tool. `@agent.tool` is for tools that need access to the
+run context, so their first argument is a `RunContext`. `@agent.tool_plain` is for tools
+that do not need the context, so they take no extra argument.
+
+```python
+from pydantic_ai import Agent, RunContext
+
+agent = Agent(
+    "openai:gpt-5.2",
+    deps_type=str,
+    instructions="You help the user with calculations and lookups.",
+)
+
+
+@agent.tool_plain
+def rectangle_area(width: float, height: float) -> float:
+    """Compute the area of a rectangle from its width and height."""
+    return width * height
+
+
+@agent.tool
+def who_is_the_user(ctx: RunContext[str]) -> str:
+    """Return the name of the current user."""
+    return ctx.deps
+
+
+result = agent.run_sync("What is the area of a 3 by 4 rectangle?", deps="Ola")
+print(result.output)
+#> The area of a 3 by 4 rectangle is 12.
+```
+
+The choice is simple. If a tool reaches for `deps`, the message history, or run information,
+use `@agent.tool` and accept a `RunContext`. If it does not, `@agent.tool_plain` keeps the
+signature cleaner.
+
+## The docstring becomes the description
+
+The model picks a tool based on its description, and that description comes straight from the
+docstring. Pydantic AI also reads per-parameter descriptions from standard docstring formats
+(Google, NumPy, Sphinx) and adds them to the schema. This is not decoration. It is the only
+guidance the model has about when and how to use your function.
+
+```python
+@agent.tool_plain
+def convert_currency(amount: float, from_code: str, to_code: str) -> float:
+    """Convert an amount from one currency to another.
+
+    Args:
+        amount: The value to convert.
+        from_code: The source currency code, for example PLN.
+        to_code: The target currency code, for example EUR.
+    """
+    rates = {("PLN", "EUR"): 0.23, ("EUR", "PLN"): 4.35}
+    return round(amount * rates[(from_code, to_code)], 2)
+```
+
+<Callout kind="tip">
+Write docstrings as if you were explaining the function to a new teammate. Concrete parameter
+names and one sentence about what the function does noticeably improve how well the model
+picks the right tool.
+</Callout>
+
+## Arguments validated from type hints
+
+Tool arguments validate exactly like fields on a Pydantic model. The type hints become a
+schema, and when the model sends something that does not match, the framework hands it back a
+validation error and asks it to retry. You get that safety for free, without writing a single
+`if` statement.
+
+<RunFlow
+  title="The run loop with a tool call"
+  nodes={[
+    { kind: "user", label: "Prompt", detail: "compute area 3 by 4" },
+    { kind: "model", label: "Model", detail: "asks for a tool" },
+    { kind: "tool", label: "Tool", detail: "args validated, function run" },
+    { kind: "model", label: "Model", detail: "receives the result 12" },
+    { kind: "output", label: "Output", detail: "result.output" },
+  ]}
+/>
+
+## ModelRetry for recoverable errors
+
+Sometimes the arguments are type-correct but still wrong in terms of logic: the city is not
+in the database, the amount exceeds a limit, the query is empty. Instead of raising a plain
+exception that halts the whole run, raise `ModelRetry`. The message goes back to the model as
+feedback, and the model tries again with better arguments.[^retry]
+
+```python
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+STOCK = {"laptop": 4, "mouse": 0, "keyboard": 12}
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="You check product availability in the warehouse.",
+)
+
+
+@agent.tool_plain
+def stock_level(product: str) -> int:
+    """Return how many units of a product are available in stock."""
+    key = product.lower().strip()
+    if key not in STOCK:
+        raise ModelRetry(
+            f"I do not know the product '{product}'. Available: {', '.join(STOCK)}."
+        )
+    return STOCK[key]
+
+
+result = agent.run_sync("How many mice do we have in stock?")
+print(result.output)
+#> We have 0 units of mouse in stock, the product is currently unavailable.
+```
+
+<Callout kind="warning">
+`ModelRetry` is for errors the model can recover from by passing different arguments. The
+number of retries is bounded (a few attempts by default). For a genuine failure, such as the
+database being down, raise a normal exception, because retrying will not help anyway.
+</Callout>
+
+## How it fits together
+
+The diagram below shows the inner loop: the model asks for a tool, Pydantic AI validates and
+runs it, and the result flows back to the model until a final answer.
+
+<Mermaid
+  caption="The tool loop inside a single run"
+  chart={`flowchart TD
+    U[Prompt] --> M[Model]
+    M -->|asks for a tool| V{Validate args}
+    V -->|error| M
+    V -->|ok| F[Tool function]
+    F -->|ModelRetry| M
+    F -->|result| M
+    M -->|done| O[result.output]`}
+/>
+
+## What is next
+
+You now have an agent that can reach for data and act, not just write. You know when to pick
+`@agent.tool` versus `@agent.tool_plain`, how the docstring drives tool selection, and how
+`ModelRetry` gives the model a second chance. The next chapter covers typed output and
+enforcing structure on the answer. The runnable code for this chapter, run against a
+tool-capable model (qwen3-coder:480b), lives in `sandbox/05-narzedzia`.
+
+[^retry]: You import `ModelRetry` from `pydantic_ai`. An argument validator (`args_validator`)
+works similarly, but it runs before the function executes.

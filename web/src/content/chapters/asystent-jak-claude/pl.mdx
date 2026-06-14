@@ -1,0 +1,188 @@
+Ten rozdział spina cały kurs w jeden projekt: budujemy asystenta w stylu Claude. Chodzi o
+czat-agenta, który ma umiejętności i wtyczki, łączy się z serwerami MCP i pyta człowieka o
+zgodę, zanim wykona ryzykowne narzędzie. Pydantic AI daje na to wszystko gotowe elementy,
+więc nie musisz pisać własnego silnika.
+
+## Z czego składa się taki asystent
+
+Asystent jak Claude to tak naprawdę cztery współpracujące części. Agent prowadzi rozmowę,
+zestawy narzędzi dają mu umiejętności, serwery MCP podłączają świat zewnętrzny, a warstwa
+akceptacji trzyma człowieka w pętli.
+
+<RunFlow
+  title="Pętla z człowiekiem w środku"
+  nodes={[
+    { kind: "user", label: "Prośba", detail: "wiadomość na czacie" },
+    { kind: "agent", label: "Agent", detail: "planuje wywołania" },
+    { kind: "tool", label: "Narzędzie", detail: "wymaga zgody" },
+    { kind: "user", label: "Człowiek", detail: "zatwierdza lub odrzuca" },
+    { kind: "output", label: "Odpowiedź", detail: "po wykonaniu" },
+  ]}
+/>
+
+## Umiejętności jako zestawy narzędzi
+
+W Pydantic AI umiejętność albo wtyczka to po prostu <Term definition="Toolset to nazwany zbiór narzędzi, który można dołączyć do agenta. Pozwala grupować i włączać umiejętności niezależnie.">zestaw narzędzi</Term>.
+Każdy zestaw grupuje powiązane funkcje, a agent dostaje ich tyle, ile chcesz mu dać przy
+danym uruchomieniu. Dzięki temu umiejętności włączasz i wyłączasz jak wtyczki, bez
+przepisywania agenta.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.toolsets import FunctionToolset
+
+# Umiejętność "pogoda" jako osobny zestaw narzędzi.
+pogoda = FunctionToolset()
+
+
+@pogoda.tool
+def temperatura(ctx: RunContext[None], miasto: str) -> str:
+    """Zwróć aktualną temperaturę dla miasta."""
+    return f"W mieście {miasto} jest 18 stopni."
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="Jesteś pomocnym asystentem. Korzystaj z dostępnych narzędzi.",
+    toolsets=[pogoda],
+)
+```
+
+Każdy kolejny zestaw to kolejna wtyczka. Możesz mieć osobno umiejętność do plików, do
+kalendarza i do wyszukiwania, a potem składać agenta z dowolnej ich kombinacji.
+
+<Callout kind="tip">
+Trzymaj jedną umiejętność w jednym zestawie narzędzi. Łatwiej je wtedy testować osobno,
+a przy budowaniu agenta wybierasz tylko te, których naprawdę potrzebujesz w danym trybie.
+</Callout>
+
+## Serwery MCP jako zewnętrzne wtyczki
+
+Model Context Protocol pozwala podłączyć narzędzia, których nie napisałeś sam. Z punktu
+widzenia agenta serwer MCP to kolejny zestaw narzędzi. Podajesz go na tej samej liście
+`toolsets`, a Pydantic AI zajmuje się komunikacją.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+
+serwer_plikow = MCPServerStdio(
+    "npx",
+    args=["-y", "@modelcontextprotocol/server-filesystem", "."],
+)
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="Korzystaj z narzędzi serwera plików, gdy użytkownik o to prosi.",
+    toolsets=[serwer_plikow],
+)
+
+
+async def main() -> None:
+    async with agent:  # uruchamia i zamyka serwery MCP
+        wynik = await agent.run("Wypisz pliki w bieżącym katalogu.")
+        print(wynik.output)
+```
+
+Połączenie tego z własnymi zestawami narzędzi daje dokładnie ten model, który znasz z
+Claude: część umiejętności jest wbudowana, część pochodzi z zewnętrznych serwerów.
+
+## Człowiek w pętli: akceptacja narzędzi
+
+Najważniejsza różnica między zabawką a poważnym asystentem to kontrola nad tym, co agent
+może wykonać. Pydantic AI realizuje to przez <Term definition="Deferred tools to narzędzia, których wykonanie jest wstrzymane i oddane na zewnątrz agenta, na przykład do akceptacji przez człowieka.">narzędzia odroczone</Term>.
+Oznaczasz narzędzie jako wymagające zgody, a agent zamiast je wykonać, zatrzymuje się i
+oddaje decyzję tobie.
+
+```python
+from pydantic_ai import (
+    Agent,
+    ApprovalRequired,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolDenied,
+)
+
+agent = Agent("openai:gpt-5.2", output_type=[str, DeferredToolRequests])
+
+CHRONIONE = {".env"}
+
+
+@agent.tool
+def zapisz_plik(ctx: RunContext[None], sciezka: str, tresc: str) -> str:
+    """Zapisz treść do pliku. Chronione pliki wymagają zgody."""
+    if sciezka in CHRONIONE and not ctx.tool_call_approved:
+        raise ApprovalRequired(metadata={"powod": "plik chroniony"})
+    return f"Zapisano {sciezka!r}."
+
+
+@agent.tool_plain(requires_approval=True)
+def usun_plik(sciezka: str) -> str:
+    """Usuń plik. Zawsze wymaga zgody."""
+    return f"Usunięto {sciezka!r}."
+```
+
+Kiedy agent chce wywołać takie narzędzie, jego wynikiem nie jest tekst, lecz obiekt
+`DeferredToolRequests` z listą próśb o zgodę. To moment, w którym pytasz użytkownika.
+
+```python
+wynik = agent.run_sync("Usuń __init__.py i wyczyść .env")
+wiadomosci = wynik.all_messages()
+
+if isinstance(wynik.output, DeferredToolRequests):
+    decyzje = DeferredToolResults()
+    for prosba in wynik.output.approvals:
+        # Tutaj pokazujesz użytkownikowi prośbę i czekasz na klik.
+        zgoda = prosba.tool_name != "usun_plik"
+        decyzje.approvals[prosba.tool_call_id] = (
+            True if zgoda else ToolDenied("Usuwanie plików jest zabronione.")
+        )
+
+    # Wznawiasz uruchomienie z decyzjami człowieka.
+    wynik = agent.run_sync(
+        "",
+        message_history=wiadomosci,
+        deferred_tool_results=decyzje,
+    )
+
+print(wynik.output)
+```
+
+<Callout kind="key">
+To jest cała istota „human in the loop". Agent nie wykonuje nic ryzykownego za twoimi
+plecami. Każde wrażliwe narzędzie zatrzymuje się na `DeferredToolRequests`, a wykonanie
+ruszy dalej dopiero po tym, jak oddasz mu `DeferredToolResults` z decyzją.
+</Callout>
+
+## Jak to wszystko łączy się w czacie
+
+W prawdziwym czacie pętla wygląda tak: użytkownik pisze wiadomość, agent rusza, a jeśli
+zwróci prośbę o zgodę, interfejs pokazuje przycisk akceptacji. Po kliknięciu wznawiasz
+uruchomienie z tą samą historią wiadomości i decyzją. Historię przekazujesz dalej między
+turami, dokładnie tak jak w rozdziale o wiadomościach.
+
+<Mermaid
+  caption="Architektura asystenta jak Claude"
+  chart={`flowchart LR
+    U[Czat] --> A[Agent]
+    A --> S1[Umiejętność: pogoda]
+    A --> S2[Umiejętność: pliki]
+    A --> M[Serwer MCP]
+    A --> H{Wymaga zgody?}
+    H -->|tak| P[Akceptacja człowieka]
+    H -->|nie| O[Odpowiedź]
+    P -->|zatwierdź lub odrzuć| A`}
+/>
+
+Masz teraz wszystkie klocki: agenta z rozdziału drugiego, narzędzia i zależności,
+strumieniowanie do interfejsu, MCP i akceptację człowieka. To właśnie zestaw, na którym
+stoją poważne asystenty.[^claude]
+
+## Co dalej
+
+Pełną, działającą wersję tego asystenta, łącznie z pętlą akceptacji w terminalu, znajdziesz
+w `sandbox/16-asystent-jak-claude`. To dobry punkt wyjścia do własnego projektu: dołóż swoje
+zestawy narzędzi, podłącz serwer MCP, którego używasz na co dzień, i podepnij interfejs.
+
+[^claude]: Sam Claude Code działa na podobnych zasadach: umiejętności, serwery MCP i prośba o zgodę przy wrażliwych operacjach.

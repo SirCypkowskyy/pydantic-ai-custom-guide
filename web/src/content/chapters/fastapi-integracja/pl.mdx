@@ -1,0 +1,179 @@
+Agent sam w sobie to tylko obiekt w pamięci. Żeby ktoś mógł z niego skorzystać przez
+przeglądarkę albo inny serwis, trzeba go wystawić przez HTTP. FastAPI nadaje się do tego
+idealnie, bo opiera się na tych samych modelach Pydantic, których agent używa do walidacji
+wejścia i wyjścia.
+
+W tym rozdziale zbudujemy małą aplikację: jeden endpoint, który przyjmuje zwalidowane
+żądanie i zwraca ustrukturyzowaną odpowiedź, drugi, który strumieniuje tekst na bieżąco,
+oraz prosty test offline, który sprawdzi całość bez wywoływania prawdziwego modelu.
+
+## Jeden agent na cały proces
+
+Agenta tworzysz raz, na poziomie modułu, i współdzielisz go między wszystkimi żądaniami.
+To nie jest mikrooptymalizacja, tylko właściwy wzorzec. Agent jest bezstanowy względem
+pojedynczego uruchomienia: cały stan rozmowy przekazujesz jawnie przez `message_history`,
+a zależności przez `deps`. Dzięki temu ten sam obiekt obsługuje wiele równoległych żądań
+bez kolizji.
+
+<Callout kind="key">
+Nie twórz `Agent(...)` wewnątrz funkcji obsługującej żądanie. Budowa agenta przy każdym
+zapytaniu marnuje czas i pamięć, a do niczego nie jest potrzebna. Definiuj go raz obok
+aplikacji FastAPI i odwołuj się do tej samej instancji.
+</Callout>
+
+## Żądanie i odpowiedź jako modele Pydantic
+
+FastAPI czyta sygnatury funkcji i z nich buduje walidację oraz dokumentację OpenAPI. Kiedy
+parametrem jest model Pydantic, framework sam zdeserializuje i sprawdzi ciało żądania. Ten
+sam mechanizm walidacji napędza `output_type` agenta, więc oba końce aplikacji mówią tym
+samym językiem.
+
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+
+
+class AskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+
+
+class Recommendation(BaseModel):
+    title: str
+    reason: str
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    output_type=Recommendation,
+    instructions="Polecaj jedną książkę i krótko uzasadnij wybór.",
+)
+
+app = FastAPI()
+
+
+@app.post("/ask", response_model=Recommendation)
+async def ask(payload: AskRequest) -> Recommendation:
+    result = await agent.run(payload.question)
+    return result.output
+```
+
+W endpoincie używamy `await agent.run(...)`, a nie `run_sync()`. Funkcja jest
+asynchroniczna, więc blokujące uruchomienie zatrzymałoby pętlę zdarzeń i zablokowało inne
+żądania. `result.output` jest już instancją `Recommendation`, więc FastAPI serializuje ją
+do JSON-a zgodnie z `response_model`.[^validation]
+
+<RunFlow
+  title="Droga jednego żądania HTTP"
+  nodes={[
+    { kind: "user", label: "POST /ask", detail: "JSON z pytaniem" },
+    { kind: "agent", label: "agent.run", detail: "await, nie run_sync" },
+    { kind: "model", label: "Model", detail: "generuje odpowiedź" },
+    { kind: "output", label: "JSON", detail: "Recommendation" },
+  ]}
+/>
+
+## Strumieniowanie odpowiedzi
+
+Gdy odpowiedź jest długa, lepiej oddawać ją kawałek po kawałku, zamiast kazać klientowi
+czekać na całość. FastAPI ma do tego `StreamingResponse`, a agent metodę `run_stream()`.
+Łączymy je przez generator asynchroniczny, który kolejne fragmenty tekstu oddaje na bieżąco.
+
+```python
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+
+from pydantic_ai import Agent
+
+stream_agent = Agent(
+    "openai:gpt-5.2",
+    instructions="Pisz wciągająco i konkretnie.",
+)
+
+app = FastAPI()
+
+
+@app.post("/stream")
+async def stream(payload: AskRequest) -> StreamingResponse:
+    async def token_stream():
+        async with stream_agent.run_stream(payload.question) as response:
+            async for chunk in response.stream_text(delta=True):
+                yield chunk
+
+    return StreamingResponse(token_stream(), media_type="text/plain")
+```
+
+Dwie rzeczy są tu istotne. Po pierwsze, `run_stream()` to menedżer kontekstu, więc używamy
+`async with`, żeby połączenie z modelem zamknęło się porządnie nawet przy błędzie. Po
+drugie, `stream_text(delta=True)` oddaje tylko nowe znaki, a nie narastający tekst od
+początku, dzięki czemu po stronie klienta wystarczy je doklejać.
+
+<Callout kind="tip">
+`media_type="text/plain"` wystarcza do surowego strumienia tekstu. Jeśli budujesz klienta
+opartego na zdarzeniach, rozważ Server-Sent Events (`text/event-stream`) albo gotowy
+adapter UI z pakietu `pydantic_ai.ui`, który koduje strumień zdarzeń w formacie znanym
+frontendom takim jak Vercel AI.
+</Callout>
+
+## Wstrzykiwanie zależności na granicy HTTP
+
+System zależności FastAPI i `deps` agenta świetnie się uzupełniają. Zależność FastAPI
+przygotowuje obiekt na żądanie (na przykład klienta bazy albo sesję HTTP), a ty przekazujesz
+go do agenta przez `deps`. Tak samo wstrzykniesz atrapę w teście.
+
+<Mermaid
+  caption="Dwie warstwy wstrzykiwania zależności wokół jednego uruchomienia agenta"
+  chart={`flowchart TD
+    C[Klient HTTP] -->|POST JSON| E[Endpoint FastAPI]
+    D[Depends: zasoby na żądanie] --> E
+    E -->|deps=...| A[agent.run]
+    A -->|ctx.deps w narzędziach| T[Narzędzia agenta]
+    A --> O[response_model]
+    O -->|JSON| C`}
+/>
+
+## Test bez sieci
+
+Najlepsze w tym układzie jest to, że całość da się przetestować offline. `TestClient` z
+FastAPI wysyła żądania bez prawdziwego serwera, a `agent.override(model=TestModel())`
+podmienia model na atrapę, która nie wychodzi do sieci. `TestModel` sam dobiera odpowiedź
+pasującą do `output_type`, więc walidacja i kontrakt endpointu są sprawdzone naprawdę.
+
+```python
+from fastapi.testclient import TestClient
+from pydantic_ai.models.test import TestModel
+
+from app import agent, app
+
+
+def test_ask_zwraca_strukture() -> None:
+    with agent.override(model=TestModel()):
+        client = TestClient(app)
+        response = client.post("/ask", json={"question": "Co czytać?"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"title", "reason"}
+```
+
+Test nie sprawdza treści generowanej przez model, bo ta zależy od prawdziwego LLM-a.
+Sprawdza za to kontrakt: status 200, kształt JSON-a i to, że walidacja przeszła. To właśnie
+ten rodzaj testu, który warto trzymać w CI, bo jest szybki i deterministyczny.
+
+<Callout kind="warning">
+`agent.override(...)` działa jako menedżer kontekstu i podmienia model tylko w obrębie
+bloku `with`. Jeśli zapomnisz o `override`, test uderzy do prawdziwego API, spowolni się i
+zacznie kosztować. Dlatego w testach zawsze owijaj wywołania endpointu w `override`.
+</Callout>
+
+## Co dalej
+
+Masz teraz wzorzec, który przenosi agenta z notatnika do prawdziwego serwisu: jeden agent
+na proces, zwalidowane żądania, ustrukturyzowane odpowiedzi, strumieniowanie i szybki test
+offline. W następnym rozdziale zajmiemy się obserwowalnością, czyli tym, jak podejrzeć, co
+agent robi pod spodem na produkcji. Działającą aplikację wraz z testem na `TestClient`
+znajdziesz w `sandbox/15-fastapi-integracja`.
+
+[^validation]: Gdy ciało żądania nie spełnia modelu `AskRequest`, FastAPI samo zwraca
+status 422 wraz z opisem błędów walidacji. Nie musisz pisać do tego żadnego kodu.

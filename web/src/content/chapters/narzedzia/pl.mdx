@@ -1,0 +1,172 @@
+Sam model potrafi tylko pisać tekst. Narzędzia zmieniają to całkowicie: dają agentowi
+sposób, by sięgnął po dane, policzył coś dokładnie albo wykonał akcję w świecie. Model
+nie wywołuje funkcji bezpośrednio. Zamiast tego prosi o jej uruchomienie, a Pydantic AI
+sprawdza argumenty, woła twój kod i odsyła wynik z powrotem do modelu.
+
+W tym rozdziale rejestrujemy narzędzia na dwa sposoby, sprawdzamy, jak argumenty walidują
+się z podpowiedzi typów, i obsługujemy błędy tak, by model mógł sam się poprawić.
+
+## Czym jest narzędzie
+
+<Term definition="Narzędzie to zwykła funkcja Pythona, którą rejestrujesz przy agencie i którą model może poprosić o wywołanie podczas uruchomienia.">Narzędzie</Term> to po prostu funkcja, którą udostępniasz modelowi. Pydantic AI bierze jej
+sygnaturę i docstring i buduje z nich schemat, który wysyła do modelu. Kiedy model uzna,
+że narzędzie jest potrzebne, zwraca jego nazwę i argumenty. Framework waliduje te argumenty
+względem podpowiedzi typów, uruchamia funkcję i wkłada wynik z powrotem do rozmowy.
+
+<Callout kind="key">
+Model nigdy nie wykonuje twojego kodu. Decyduje tylko, że narzędzie powinno zostać wywołane
+i z jakimi argumentami. Całą resztę, czyli walidację, wywołanie i obsługę błędów, robi
+Pydantic AI po twojej stronie.
+</Callout>
+
+## Dwa dekoratory: tool oraz tool_plain
+
+Są dwa sposoby rejestracji. `@agent.tool` jest dla narzędzi, które potrzebują dostępu do
+kontekstu uruchomienia, więc ich pierwszym argumentem jest `RunContext`. `@agent.tool_plain`
+jest dla narzędzi, które kontekstu nie potrzebują, więc nie biorą żadnego dodatkowego
+argumentu.
+
+```python
+from pydantic_ai import Agent, RunContext
+
+agent = Agent(
+    "openai:gpt-5.2",
+    deps_type=str,
+    instructions="Pomagasz użytkownikowi w obliczeniach i sprawdzaniu danych.",
+)
+
+
+@agent.tool_plain
+def pole_prostokata(szerokosc: float, wysokosc: float) -> float:
+    """Oblicz pole prostokąta na podstawie szerokości i wysokości."""
+    return szerokosc * wysokosc
+
+
+@agent.tool
+def kim_jest_uzytkownik(ctx: RunContext[str]) -> str:
+    """Zwróć nazwę bieżącego użytkownika."""
+    return ctx.deps
+
+
+result = agent.run_sync("Jakie jest pole prostokąta 3 na 4?", deps="Ola")
+print(result.output)
+#> Pole prostokąta 3 na 4 wynosi 12.
+```
+
+Wybór jest prosty. Jeśli narzędzie sięga po `deps`, historię wiadomości albo dane o
+uruchomieniu, użyj `@agent.tool` i przyjmij `RunContext`. Jeśli nie, `@agent.tool_plain`
+trzyma sygnaturę czystszą.
+
+## Docstring staje się opisem
+
+Model wybiera narzędzie na podstawie jego opisu, a opis bierze się wprost z docstringa.
+Pydantic AI czyta też opisy poszczególnych parametrów ze standardowych formatów docstringów
+(Google, NumPy, Sphinx) i dokłada je do schematu. To nie jest dekoracja. To jedyne
+wskazówki, jakie model ma o tym, kiedy i jak użyć twojej funkcji.
+
+```python
+@agent.tool_plain
+def konwertuj_walute(kwota: float, z_waluty: str, na_walute: str) -> float:
+    """Przelicz kwotę z jednej waluty na drugą.
+
+    Args:
+        kwota: Wartość do przeliczenia.
+        z_waluty: Kod waluty źródłowej, na przykład PLN.
+        na_walute: Kod waluty docelowej, na przykład EUR.
+    """
+    kursy = {("PLN", "EUR"): 0.23, ("EUR", "PLN"): 4.35}
+    return round(kwota * kursy[(z_waluty, na_walute)], 2)
+```
+
+<Callout kind="tip">
+Pisz docstringi tak, jakbyś tłumaczył funkcję nowemu koledze z zespołu. Konkretne nazwy
+parametrów i jedno zdanie o tym, co funkcja robi, znacząco poprawiają trafność wyboru
+narzędzia przez model.
+</Callout>
+
+## Walidacja argumentów z podpowiedzi typów
+
+Argumenty narzędzia walidują się dokładnie tak samo jak pola modelu Pydantic. Podpowiedzi
+typów stają się schematem, a kiedy model przyśle coś niezgodnego, framework zwraca mu błąd
+walidacji i prosi o ponowienie. Dostajesz tę kontrolę za darmo, bez pisania ani jednej
+instrukcji `if`.
+
+<RunFlow
+  title="Pętla uruchomienia z wywołaniem narzędzia"
+  nodes={[
+    { kind: "user", label: "Zapytanie", detail: "policz pole 3 na 4" },
+    { kind: "model", label: "Model", detail: "prosi o narzędzie" },
+    { kind: "tool", label: "Narzędzie", detail: "argumenty zwalidowane, funkcja uruchomiona" },
+    { kind: "model", label: "Model", detail: "dostaje wynik 12" },
+    { kind: "output", label: "Wynik", detail: "result.output" },
+  ]}
+/>
+
+## ModelRetry przy błędach do naprawienia
+
+Czasem argumenty są poprawne typologicznie, ale wciąż złe pod względem logiki: miasto nie
+istnieje w bazie, kwota przekracza limit, zapytanie jest puste. Zamiast rzucać zwykły
+wyjątek, który zatrzyma całe uruchomienie, podnieś `ModelRetry`. Wiadomość trafia z
+powrotem do modelu jako informacja zwrotna, a model próbuje jeszcze raz z lepszymi
+argumentami.[^retry]
+
+```python
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+MAGAZYN = {"laptop": 4, "mysz": 0, "klawiatura": 12}
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="Sprawdzasz dostępność produktów w magazynie.",
+)
+
+
+@agent.tool_plain
+def stan_magazynowy(produkt: str) -> int:
+    """Zwróć liczbę sztuk produktu dostępnych w magazynie."""
+    klucz = produkt.lower().strip()
+    if klucz not in MAGAZYN:
+        raise ModelRetry(
+            f"Nie znam produktu '{produkt}'. Dostępne: {', '.join(MAGAZYN)}."
+        )
+    return MAGAZYN[klucz]
+
+
+result = agent.run_sync("Ile mamy myszek na stanie?")
+print(result.output)
+#> Mamy 0 sztuk myszy na stanie, produkt jest chwilowo niedostępny.
+```
+
+<Callout kind="warning">
+`ModelRetry` jest dla błędów, z których model może wyjść, podając inne argumenty. Liczba
+ponowień jest ograniczona (domyślnie kilka prób). Na prawdziwą awarię, na przykład gdy
+baza danych jest niedostępna, podnieś normalny wyjątek, bo ponawianie i tak nic nie da.
+</Callout>
+
+## Jak to się składa w całość
+
+Poniższy diagram pokazuje wewnętrzną pętlę: model prosi o narzędzie, Pydantic AI waliduje
+i uruchamia, a wynik wraca do modelu aż do ostatecznej odpowiedzi.
+
+<Mermaid
+  caption="Pętla narzędziowa wewnątrz jednego uruchomienia"
+  chart={`flowchart TD
+    U[Zapytanie] --> M[Model]
+    M -->|prosi o narzędzie| V{Walidacja argumentów}
+    V -->|błąd| M
+    V -->|ok| F[Funkcja narzędzia]
+    F -->|ModelRetry| M
+    F -->|wynik| M
+    M -->|gotowe| O[result.output]`}
+/>
+
+## Co dalej
+
+Masz już agenta, który potrafi sięgać po dane i działać, a nie tylko pisać. Wiesz, kiedy
+wybrać `@agent.tool`, a kiedy `@agent.tool_plain`, jak docstring steruje wyborem narzędzia
+i jak `ModelRetry` daje modelowi drugą szansę. W następnym rozdziale zajmiemy się typowanym
+wynikiem i wymuszaniem struktury odpowiedzi. Działający kod do tego rozdziału, uruchamiany
+na modelu z obsługą narzędzi (qwen3-coder:480b), znajdziesz w `sandbox/05-narzedzia`.
+
+[^retry]: `ModelRetry` importujesz z `pydantic_ai`. Walidator argumentów (`args_validator`)
+działa podobnie, ale uruchamia się jeszcze przed wykonaniem funkcji.

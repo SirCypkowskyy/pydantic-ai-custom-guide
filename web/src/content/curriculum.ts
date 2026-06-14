@@ -34,6 +34,7 @@ export const parts: CoursePart[] = [
   { id: "flow", title: { pl: "Przepływ i komunikacja", en: "Flow & communication" } },
   { id: "production", title: { pl: "Produkcja", en: "Production" } },
   { id: "ecosystem", title: { pl: "Ekosystem Pydantic", en: "Pydantic ecosystem" } },
+  { id: "capstone", title: { pl: "Projekt końcowy", en: "Capstone" } },
 ];
 
 const AI = "https://pydantic.dev/docs/ai";
@@ -283,6 +284,26 @@ export const chapters: Chapter[] = [
       { label: "Pydantic AI", url: `${AI}/overview` },
     ],
     sandbox: "15-fastapi-integracja",
+  },
+  {
+    order: 16,
+    slug: "asystent-jak-claude",
+    icon: "Bot",
+    difficulty: "advanced",
+    minutes: 32,
+    partId: "capstone",
+    title: { pl: "Asystent jak Claude (capstone)", en: "A Claude-like assistant (capstone)" },
+    summary: {
+      pl: "Zbuduj wiernie odwzorowany czat-agent w stylu Claude: umiejętności i wtyczki, serwery MCP oraz człowiek w pętli przy akceptacji wykonania narzędzi.",
+      en: "Build a faithful Claude-style chat agent: skills and plugins, MCP servers, and a human in the loop approving tool execution.",
+    },
+    docs: [
+      { label: "Tools", url: `${AI}/tools` },
+      { label: "Deferred tools / HITL", url: `${AI}/deferred-tools` },
+      { label: "MCP", url: `${AI}/mcp` },
+      { label: "Toolsets", url: `${AI}/toolsets` },
+    ],
+    sandbox: "16-asystent-jak-claude",
   },
 ];
 

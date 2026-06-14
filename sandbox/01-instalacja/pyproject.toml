@@ -1,0 +1,6 @@
+[project]
+name = "ch01-instalacja"
+version = "0.1.0"
+description = "Chapter 1: Install Pydantic AI and run your first agent."
+requires-python = ">=3.12"
+dependencies = ["pydantic-ai>=1.0", "pai-sandbox-shared"]

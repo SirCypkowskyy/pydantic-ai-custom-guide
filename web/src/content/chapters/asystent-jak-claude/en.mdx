@@ -1,0 +1,188 @@
+This chapter ties the whole course into one project: we build a Claude-style assistant. It
+is a chat agent that has skills and plugins, connects to MCP servers, and asks a human for
+approval before running a risky tool. Pydantic AI ships all of these pieces, so you do not
+have to write your own engine.
+
+## What such an assistant is made of
+
+A Claude-like assistant is really four parts working together. The agent runs the
+conversation, toolsets give it skills, MCP servers connect the outside world, and an
+approval layer keeps a human in the loop.
+
+<RunFlow
+  title="The human-in-the-loop cycle"
+  nodes={[
+    { kind: "user", label: "Request", detail: "a chat message" },
+    { kind: "agent", label: "Agent", detail: "plans tool calls" },
+    { kind: "tool", label: "Tool", detail: "needs approval" },
+    { kind: "user", label: "Human", detail: "approves or denies" },
+    { kind: "output", label: "Reply", detail: "after execution" },
+  ]}
+/>
+
+## Skills as toolsets
+
+In Pydantic AI a skill or plugin is simply a <Term definition="A toolset is a named group of tools you can attach to an agent. It lets you group and enable skills independently.">toolset</Term>.
+Each toolset groups related functions, and the agent gets as many of them as you decide to
+give it for a run. That means you switch skills on and off like plugins, without rewriting
+the agent.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.toolsets import FunctionToolset
+
+# A "weather" skill as a separate toolset.
+weather = FunctionToolset()
+
+
+@weather.tool
+def temperature(ctx: RunContext[None], city: str) -> str:
+    """Return the current temperature for a city."""
+    return f"It is 18 degrees in {city}."
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="You are a helpful assistant. Use the available tools.",
+    toolsets=[weather],
+)
+```
+
+Every extra toolset is another plugin. You can keep a files skill, a calendar skill, and a
+search skill separate, then assemble an agent from any combination of them.
+
+<Callout kind="tip">
+Keep one skill per toolset. They are easier to test in isolation, and when you build the
+agent you pick only the ones you actually need for a given mode.
+</Callout>
+
+## MCP servers as external plugins
+
+The Model Context Protocol lets you plug in tools you did not write yourself. From the
+agent's point of view an MCP server is just another toolset. You pass it in the same
+`toolsets` list, and Pydantic AI handles the communication.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+
+files_server = MCPServerStdio(
+    "npx",
+    args=["-y", "@modelcontextprotocol/server-filesystem", "."],
+)
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="Use the file server tools when the user asks.",
+    toolsets=[files_server],
+)
+
+
+async def main() -> None:
+    async with agent:  # starts and stops the MCP servers
+        result = await agent.run("List the files in the current directory.")
+        print(result.output)
+```
+
+Combining this with your own toolsets gives you exactly the model you know from Claude: some
+skills are built in, some come from external servers.
+
+## Human in the loop: tool approval
+
+The biggest difference between a toy and a serious assistant is control over what the agent
+is allowed to run. Pydantic AI does this through <Term definition="Deferred tools are tools whose execution is paused and handed outside the agent, for example to a human for approval.">deferred tools</Term>.
+You mark a tool as requiring approval, and instead of running it, the agent pauses and hands
+the decision to you.
+
+```python
+from pydantic_ai import (
+    Agent,
+    ApprovalRequired,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolDenied,
+)
+
+agent = Agent("openai:gpt-5.2", output_type=[str, DeferredToolRequests])
+
+PROTECTED = {".env"}
+
+
+@agent.tool
+def write_file(ctx: RunContext[None], path: str, content: str) -> str:
+    """Write content to a file. Protected files require approval."""
+    if path in PROTECTED and not ctx.tool_call_approved:
+        raise ApprovalRequired(metadata={"reason": "protected file"})
+    return f"Wrote {path!r}."
+
+
+@agent.tool_plain(requires_approval=True)
+def delete_file(path: str) -> str:
+    """Delete a file. Always requires approval."""
+    return f"Deleted {path!r}."
+```
+
+When the agent wants to call such a tool, its output is not text but a `DeferredToolRequests`
+object with a list of approval requests. That is the moment you ask the user.
+
+```python
+result = agent.run_sync("Delete __init__.py and clear .env")
+messages = result.all_messages()
+
+if isinstance(result.output, DeferredToolRequests):
+    decisions = DeferredToolResults()
+    for request in result.output.approvals:
+        # Here you show the request to the user and wait for a click.
+        approved = request.tool_name != "delete_file"
+        decisions.approvals[request.tool_call_id] = (
+            True if approved else ToolDenied("Deleting files is not allowed.")
+        )
+
+    # Resume the run with the human decisions.
+    result = agent.run_sync(
+        "",
+        message_history=messages,
+        deferred_tool_results=decisions,
+    )
+
+print(result.output)
+```
+
+<Callout kind="key">
+This is the whole idea of "human in the loop". The agent does nothing risky behind your
+back. Every sensitive tool pauses at `DeferredToolRequests`, and execution only continues
+once you hand back `DeferredToolResults` with a decision.
+</Callout>
+
+## How it all comes together in a chat
+
+In a real chat the loop looks like this: the user sends a message, the agent runs, and if it
+returns an approval request the interface shows an approve button. After the click you resume
+the run with the same message history and the decision. You pass the history forward between
+turns, exactly as in the messages chapter.
+
+<Mermaid
+  caption="Architecture of a Claude-like assistant"
+  chart={`flowchart LR
+    U[Chat] --> A[Agent]
+    A --> S1[Skill: weather]
+    A --> S2[Skill: files]
+    A --> M[MCP server]
+    A --> H{Needs approval?}
+    H -->|yes| P[Human approval]
+    H -->|no| O[Reply]
+    P -->|approve or deny| A`}
+/>
+
+You now have all the blocks: the agent from chapter two, tools and dependencies, streaming to
+the interface, MCP, and human approval. That is the exact stack serious assistants stand
+on.[^claude]
+
+## What is next
+
+The full, working version of this assistant, including the approval loop in the terminal,
+lives in `sandbox/16-asystent-jak-claude`. It is a good starting point for your own project:
+add your own toolsets, connect the MCP server you use day to day, and wire up an interface.
+
+[^claude]: Claude Code itself works on similar principles: skills, MCP servers, and an approval prompt for sensitive operations.

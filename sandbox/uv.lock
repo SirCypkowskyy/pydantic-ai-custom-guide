@@ -4,7 +4,22 @@ requires-python = ">=3.12"
 
 [manifest]
 members = [
+    "ch01-instalacja",
     "ch02-agenty",
+    "ch03-modele",
+    "ch04-structured-output",
+    "ch05-narzedzia",
+    "ch06-zaleznosci",
+    "ch07-wiadomosci-historia",
+    "ch08-streaming",
+    "ch09-mcp",
+    "ch10-multi-agent",
+    "ch11-testy-ewaluacje",
+    "ch12-logfire-observability",
+    "ch13-pydantic-walidacja",
+    "ch14-pydantic-settings",
+    "ch15-fastapi-integracja",
+    "ch16-asystent-jak-claude",
     "pai-sandbox-shared",
     "pydantic-ai-sandbox",
 ]
@@ -382,9 +397,250 @@ wheels = [
 ]
 
 [[package]]
+name = "ch01-instalacja"
+version = "0.1.0"
+source = { virtual = "01-instalacja" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
 name = "ch02-agenty"
 version = "0.1.0"
 source = { virtual = "02-agenty" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch03-modele"
+version = "0.1.0"
+source = { virtual = "03-modele" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch04-structured-output"
+version = "0.1.0"
+source = { virtual = "04-structured-output" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch05-narzedzia"
+version = "0.1.0"
+source = { virtual = "05-narzedzia" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch06-zaleznosci"
+version = "0.1.0"
+source = { virtual = "06-zaleznosci" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch07-wiadomosci-historia"
+version = "0.1.0"
+source = { virtual = "07-wiadomosci-historia" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch08-streaming"
+version = "0.1.0"
+source = { virtual = "08-streaming" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch09-mcp"
+version = "0.1.0"
+source = { virtual = "09-mcp" }
+dependencies = [
+    { name = "mcp" },
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mcp", specifier = ">=1.0" },
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch10-multi-agent"
+version = "0.1.0"
+source = { virtual = "10-multi-agent" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+    { name = "pydantic-graph" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+    { name = "pydantic-graph", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch11-testy-ewaluacje"
+version = "0.1.0"
+source = { virtual = "11-testy-ewaluacje" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+    { name = "pydantic-evals" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+    { name = "pydantic-evals", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch12-logfire-observability"
+version = "0.1.0"
+source = { virtual = "12-logfire-observability" }
+dependencies = [
+    { name = "logfire" },
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "logfire", specifier = ">=3.0" },
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch13-pydantic-walidacja"
+version = "0.1.0"
+source = { virtual = "13-pydantic-walidacja" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "ch14-pydantic-settings"
+version = "0.1.0"
+source = { virtual = "14-pydantic-settings" }
+dependencies = [
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+    { name = "pydantic-settings" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+    { name = "pydantic-settings", specifier = ">=2.5" },
+]
+
+[[package]]
+name = "ch15-fastapi-integracja"
+version = "0.1.0"
+source = { virtual = "15-fastapi-integracja" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+    { name = "uvicorn", specifier = ">=0.30" },
+]
+
+[[package]]
+name = "ch16-asystent-jak-claude"
+version = "0.1.0"
+source = { virtual = "16-asystent-jak-claude" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },
@@ -642,6 +898,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/cc/28/c14e053b6762b1044f34a13aab6859bbf40456d37d23aa286ac24cfd9a5d/executing-2.2.1.tar.gz", hash = "sha256:3632cc370565f6648cc328b32435bd120a1e4ebb20c77e3fdde9a13cd1e533c4", size = 1129488, upload-time = "2025-09-01T09:48:10.866Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/ea/53f2148663b321f21b5a606bd5f191517cf40b7072c0497d3c92c4a13b1e/executing-2.2.1-py2.py3-none-any.whl", hash = "sha256:760643d3452b4d777d295bb167ccc74c64a81df23fb5e08eff250c425a4b2017", size = 28317, upload-time = "2025-09-01T09:48:08.5Z" },
+]
+
+[[package]]
+name = "fastapi"
+version = "0.136.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/81/2d/ff8d91d7b564d464629a0fd50a4489c97fcb836ac230bf3a7269232a9b1f/fastapi-0.136.3.tar.gz", hash = "sha256:e487fae93ad408e6f47641ee4dfe389864fd7bec92e547ea8498fc13f43e83ab", size = 396410, upload-time = "2026-05-23T18:53:15.192Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e0/82/45359b62a067409bd929ae8a56b8ed13e5a8c8a61194b3c236920999ab83/fastapi-0.136.3-py3-none-any.whl", hash = "sha256:3d2a69bdf04b7e9f3afa292c3bc7a98816bbfafa10bc9b45f3f3700d2f761620", size = 117481, upload-time = "2026-05-23T18:53:16.924Z" },
 ]
 
 [[package]]

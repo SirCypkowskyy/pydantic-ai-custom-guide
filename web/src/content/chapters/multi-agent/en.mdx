@@ -1,0 +1,216 @@
+A single agent gets you surprisingly far, but real applications rarely stop at one.
+Sometimes you want one agent to hand a slice of work to another. Sometimes you need rigid
+control flow, where each step depends on state. This chapter shows how Pydantic AI scales
+from one agent to a full graph.
+
+The library authors call out a few levels of complexity: a single agent, delegation to
+another agent, a programmatic hand-off in your application code, and finally a graph as a
+state machine. We start with delegation, since it is the most common step once you are
+comfortable with one agent.[^levels]
+
+## Agent delegation
+
+Delegation is when an agent, mid-run, calls a tool, and that tool runs a second agent. The
+parent agent decides when to hand off work, collects the result, and turns it into a final
+answer. One detail matters: when you run the delegate agent, pass `usage=ctx.usage` so
+token usage is counted together.
+
+```python
+from pydantic_ai import Agent, RunContext, UsageLimits
+
+selection_agent = Agent(
+    "openai:gpt-5.2",
+    instructions=(
+        "Use the `joke_factory` tool to generate some jokes, "
+        "then pick the best one. Return exactly one joke."
+    ),
+)
+
+generator_agent = Agent("openai:gpt-5.2", output_type=list[str])
+
+
+@selection_agent.tool
+async def joke_factory(ctx: RunContext[None], count: int) -> list[str]:
+    result = await generator_agent.run(
+        f"Generate {count} jokes.",
+        usage=ctx.usage,  # shared usage accounting
+    )
+    return result.output
+
+
+result = selection_agent.run_sync(
+    "Tell me a joke.",
+    usage_limits=UsageLimits(request_limit=5, total_tokens_limit=800),
+)
+print(result.output)
+#> A programmer walked into a bar and ordered NULL. The barman returned an error.
+```
+
+The parent and the delegate can use different models. A common pattern is a cheap, fast
+model to produce variants and a stronger model to make the final choice.
+
+<RunFlow
+  title="Delegation: one agent calls another through a tool"
+  nodes={[
+    { kind: "user", label: "Prompt", detail: "tell me a joke" },
+    { kind: "agent", label: "Selection agent", detail: "calls joke_factory" },
+    { kind: "tool", label: "Tool", detail: "runs the generator" },
+    { kind: "agent", label: "Generator agent", detail: "returns a list" },
+    { kind: "output", label: "Output", detail: "one joke" },
+  ]}
+/>
+
+<Callout kind="tip">
+Usage limits (`UsageLimits`) apply across the whole call tree, so delegation cannot quietly
+blow your token budget. Always pass `usage=ctx.usage` to the delegate agent, otherwise the
+accounting will be incomplete.
+</Callout>
+
+## Programmatic hand-off
+
+Delegation happens inside one run. A hand-off is different: one agent finishes, and then
+your application code decides which agent to run next. Control returns to Python between
+steps, so you can add validation, loops, or a question to the user.
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+
+class Flight(BaseModel):
+    flight_number: str
+
+class Seat(BaseModel):
+    row: int
+    seat: str
+
+find_flight = Agent("openai:gpt-5.2", output_type=Flight)
+pick_seat = Agent("openai:gpt-5.2", output_type=Seat)
+
+
+def book(prompt: str) -> tuple[Flight, Seat]:
+    flight = find_flight.run_sync(prompt).output
+    # application code decides what comes next
+    seat = pick_seat.run_sync(
+        f"Pick a seat for flight {flight.flight_number}."
+    ).output
+    return flight, seat
+```
+
+The difference is subtle but real. With delegation the parent agent chooses the moment to
+hand off. With a hand-off you hold the wheel and see the result of each step before the
+next one starts.
+
+## Graphs with pydantic_graph
+
+When the flow gets branchy, the higher-end tool is `pydantic_graph`. You define nodes as
+classes that subclass `BaseNode`. Each node's `run` method returns either the next node or
+`End`, when the graph should stop. Shared state lives in an object passed through
+`GraphRunContext`.
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from pydantic_ai import Agent
+from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+
+triage_agent = Agent("openai:gpt-5.2", output_type=bool)
+answer_agent = Agent("openai:gpt-5.2")
+
+
+@dataclass
+class State:
+    question: str
+
+
+@dataclass
+class Triage(BaseNode[State]):
+    async def run(self, ctx: GraphRunContext[State]) -> Answer | End[str]:
+        urgent = await triage_agent.run(
+            f"Does this question need a human? {ctx.state.question}"
+        )
+        if urgent.output:
+            return End("Handing this off to a human agent.")
+        return Answer()
+
+
+@dataclass
+class Answer(BaseNode[State, None, str]):
+    async def run(self, ctx: GraphRunContext[State]) -> End[str]:
+        result = await answer_agent.run(ctx.state.question)
+        return End(result.output)
+
+
+graph = Graph(nodes=[Triage, Answer])
+
+
+async def main() -> None:
+    result = await graph.run(Triage(), state=State(question="How do I reset my password?"))
+    print(result.output)
+    #> Open account settings and click "Reset password".
+```
+
+The `Triage` node routes traffic: it returns `End` when a case needs a human, or the
+`Answer` node otherwise. The types returned by `run` describe the graph's allowed edges, so
+the type checker keeps the flow consistent.
+
+<Mermaid
+  caption="A small triage graph: branching on an agent's decision"
+  chart={`flowchart TD
+    S((start)) --> T[Triage]
+    T -->|urgent| E1([End: to a human])
+    T -->|routine| A[Answer]
+    A --> E2([End: answer])`}
+/>
+
+<Callout kind="note">
+The graph's state (`State`) is explicit and serializable. That is no accident: it lets the
+graph pause, persist, and resume later. This is exactly what durable execution builds on.
+</Callout>
+
+## Durable execution
+
+Long flows tend to be brittle. A process can die halfway, and a model API can time out.
+<Term definition="Durable execution runs a flow so that, after a failure, it resumes from the last completed step rather than from scratch.">Durable execution</Term>
+solves this by recording every completed step. After a crash, the flow resumes where it
+stopped instead of starting over.
+
+Pydantic AI integrates with engines like DBOS and Temporal. You wrap an agent in an adapter
+and keep using the ordinary `run` API, while the engine underneath handles durability.
+
+```python
+from dbos import DBOS, DBOSConfig
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.dbos import DBOSAgent
+
+DBOS(config=DBOSConfig(name="geo", system_database_url="sqlite:///dbos.sqlite"))
+
+agent = Agent("openai:gpt-5.2", instructions="You are a geography expert.", name="geo")
+durable_agent = DBOSAgent(agent)
+
+
+async def main() -> None:
+    DBOS.launch()
+    result = await durable_agent.run("What is the capital of Mexico?")
+    print(result.output)
+    #> The capital of Mexico is Mexico City (Ciudad de México).
+```
+
+<Callout kind="warning">
+Durable execution requires steps to be deterministic and serializable. Do not hide
+randomness or external side effects inside a node without thinking about how they will look
+after a resume.
+</Callout>
+
+## What is next
+
+You now have four tools for combining agents: delegation, programmatic hand-off, graphs,
+and durable execution. Reach for the simplest one that solves the problem, and pull in a
+graph only when control flow branches. The runnable code for this chapter, including the
+small triage graph, lives in `sandbox/10-multi-agent`.
+
+[^levels]: The docs list five levels: a single agent, delegation, hand-off, a graph, and so
+called deep agents. Here we focus on the middle three.

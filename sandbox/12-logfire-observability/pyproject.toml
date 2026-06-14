@@ -1,0 +1,6 @@
+[project]
+name = "ch12-logfire-observability"
+version = "0.1.0"
+description = "Chapter 12: Observability with Logfire - tracing agent runs."
+requires-python = ">=3.12"
+dependencies = ["pydantic-ai>=1.0", "pai-sandbox-shared", "logfire>=3.0"]

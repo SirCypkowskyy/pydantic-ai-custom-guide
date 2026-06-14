@@ -1,0 +1,141 @@
+Before you write your first agent, you need two things: a clean Python environment and the
+`pydantic-ai` library installed. Everything else is a few lines of code and one API key. In
+this chapter we set up an environment with `uv`, install the library, and run an agent that
+answers a question.
+
+`uv` is a fast package and environment manager for Python. If you prefer `pip` or `poetry`,
+nothing stops you, but this guide sticks with `uv` because it cuts the whole setup down to
+two commands.[^uv]
+
+## Setting up the environment
+
+First you need Python 3.10 or newer. `uv` can install it for you, so you do not have to
+fight with the system interpreter. We create a new project directory, initialize it, and add
+the library.
+
+```bash
+# Initialize the project and create a virtual environment
+uv init first-agent
+cd first-agent
+
+# Add pydantic-ai as a dependency
+uv add pydantic-ai
+```
+
+`uv add` records `pydantic-ai` in your `pyproject.toml` and installs it into the project's
+isolated environment. You do not need to activate a `venv` by hand: you run commands through
+`uv run`, and `uv` picks the right interpreter for you.
+
+<Callout kind="tip">
+The `pydantic-ai` package pulls in every supported model provider. If you want a lighter
+install, you can add just what you need, for example `uv add "pydantic-ai-slim[openai]"`. For
+getting started, the full package is more convenient.
+</Callout>
+
+## Choosing a model and the API key
+
+You point at a model with an identifier in the `provider:name` format, for example
+`openai:gpt-5.2`. The part before the colon is the
+<Term definition="A provider is the service that serves the model over an API, such as OpenAI, Anthropic, or Google. In the identifier it is the part before the colon.">provider</Term>,
+and the part after it is the specific model. From that prefix Pydantic AI knows which API to
+call and which environment variable to read the key from.
+
+Most providers read the key from an environment variable. For OpenAI it is `OPENAI_API_KEY`,
+for Anthropic `ANTHROPIC_API_KEY`, and for Google `GEMINI_API_KEY`. You set the key once in
+your terminal session before you run the script.
+
+```bash
+# Linux and macOS
+export OPENAI_API_KEY="sk-..."
+
+# Windows PowerShell
+$env:OPENAI_API_KEY="sk-..."
+```
+
+<Callout kind="warning">
+Do not hard-code an API key in your code and do not commit it to a repository. Keep it in an
+environment variable or in a `.env` file that you add to `.gitignore`. Treat any key that
+lands in git history as leaked and revoke it right away.
+</Callout>
+
+## Your first agent
+
+With the library installed and the key set, you can write an agent. The simplest version
+needs only a model and one sentence of instructions. Save the code below in a file named
+`main.py`.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="Answer concisely, in a single sentence.",
+)
+
+result = agent.run_sync("Where does the name Pydantic AI come from?")
+print(result.output)
+#> It combines the Pydantic library with building AI agents.
+```
+
+The first argument is the model identifier. The `instructions` parameter describes how the
+agent should behave. The `run_sync` method runs the agent synchronously, meaning it waits for
+the full response, and returns a result object. You read the response text from the
+`result.output` field.
+
+You run the script through `uv run`, so you never have to remember to activate the
+environment.
+
+```bash
+uv run python main.py
+```
+
+## What happens under the hood
+
+A single `run_sync` call goes through a few steps. The agent builds a list of messages from
+your question and the instructions, sends it to the model of the chosen provider, then reads
+the response and wraps it in a result object.
+
+<RunFlow
+  title="The flow of the first run"
+  nodes={[
+    { kind: "user", label: "Question", detail: "text in run_sync" },
+    { kind: "agent", label: "Agent", detail: "builds messages" },
+    { kind: "model", label: "Provider model", detail: "openai:gpt-5.2" },
+    { kind: "output", label: "Output", detail: "result.output" },
+  ]}
+/>
+
+The whole setup comes down to three pieces that snap together: the install, the API key, and
+the agent itself.
+
+<Mermaid
+  caption="What you need to run your first agent"
+  chart={`flowchart TD
+    U[uv add pydantic-ai] --> A[Agent]
+    K[OPENAI_API_KEY] --> A
+    A --> R[run_sync]
+    R --> O[result.output]`}
+/>
+
+## When something does not work
+
+The most common early mistake is a missing API key. Pydantic AI then raises an exception
+that tells you which environment variable is absent. Check that the key is set in the same
+terminal session where you run the script, because `export` does not carry over between
+windows.
+
+<Callout kind="note">
+If you would rather not pay for any API yet, the models chapter shows how to connect Ollama
+Cloud and local models. We test the examples in the `sandbox` directory on Ollama Cloud, so
+you can run them without an OpenAI key.
+</Callout>
+
+## What is next
+
+You now have an environment set up, the library installed, and a working agent that answers
+questions. In the next chapter we look more closely at the `Agent` object itself: what
+exactly it ties together, how instructions work, and what `RunContext` is. The runnable code
+for this chapter lives in `sandbox/01-instalacja`.
+
+[^uv]: You install `uv` with a single command from the project site. It works on Linux,
+macOS, and Windows and does not require Python to be installed first.

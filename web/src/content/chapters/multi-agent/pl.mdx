@@ -1,0 +1,216 @@
+Pojedynczy agent dowozi zaskakująco dużo, ale prawdziwe aplikacje rzadko kończą się na
+jednym. Czasem chcesz, żeby jeden agent zlecił fragment pracy drugiemu. Czasem
+potrzebujesz sztywnego przepływu sterowania, w którym kolejne kroki zależą od stanu. Ten
+rozdział pokazuje, jak Pydantic AI skaluje się od jednego agenta do całego grafu.
+
+Twórcy biblioteki wyróżniają kilka poziomów złożoności: pojedynczy agent, delegacja do
+innego agenta, programowy hand-off w kodzie aplikacji i wreszcie graf jako maszyna stanów.
+Zaczniemy od delegacji, bo to najczęstszy krok po opanowaniu jednego agenta.[^poziomy]
+
+## Delegacja agentów
+
+Delegacja to sytuacja, w której agent w trakcie działania wywołuje narzędzie, a to
+narzędzie uruchamia drugiego agenta. Agent nadrzędny decyduje, kiedy oddać pracę, zbiera
+wynik i składa z niego ostateczną odpowiedź. Kluczowy detal: do uruchomienia agenta
+podrzędnego przekazujesz `usage=ctx.usage`, żeby zużycie tokenów liczyło się wspólnie.
+
+```python
+from pydantic_ai import Agent, RunContext, UsageLimits
+
+selekcja_agent = Agent(
+    "openai:gpt-5.2",
+    instructions=(
+        "Użyj narzędzia `fabryka_zartow`, aby wygenerować kilka żartów, "
+        "potem wybierz najlepszy. Zwróć dokładnie jeden żart."
+    ),
+)
+
+generator_agent = Agent("openai:gpt-5.2", output_type=list[str])
+
+
+@selekcja_agent.tool
+async def fabryka_zartow(ctx: RunContext[None], ile: int) -> list[str]:
+    wynik = await generator_agent.run(
+        f"Wygeneruj {ile} żartów.",
+        usage=ctx.usage,  # wspólne liczenie zużycia
+    )
+    return wynik.output
+
+
+result = selekcja_agent.run_sync(
+    "Opowiedz mi żart.",
+    usage_limits=UsageLimits(request_limit=5, total_tokens_limit=800),
+)
+print(result.output)
+#> Wpadł programista do baru i zamówił NULL. Barman zwrócił błąd.
+```
+
+Agent nadrzędny i podrzędny mogą korzystać z różnych modeli. Częsty wzorzec to tani,
+szybki model do generowania wariantów i mocniejszy model do finalnego wyboru.
+
+<RunFlow
+  title="Delegacja: jeden agent woła drugiego przez narzędzie"
+  nodes={[
+    { kind: "user", label: "Zapytanie", detail: "opowiedz żart" },
+    { kind: "agent", label: "Agent selekcji", detail: "woła fabryka_zartow" },
+    { kind: "tool", label: "Narzędzie", detail: "uruchamia generator" },
+    { kind: "agent", label: "Agent generatora", detail: "zwraca listę" },
+    { kind: "output", label: "Wynik", detail: "jeden żart" },
+  ]}
+/>
+
+<Callout kind="tip">
+Limity zużycia (`UsageLimits`) działają na całe drzewo wywołań, więc delegacja nie może
+po cichu wysadzić budżetu tokenów. Zawsze przekazuj `usage=ctx.usage` do agenta
+podrzędnego, inaczej zliczanie będzie niekompletne.
+</Callout>
+
+## Programowy hand-off
+
+Delegacja dzieje się wewnątrz jednego uruchomienia. Hand-off jest inny: jeden agent kończy
+pracę, a potem to twój kod aplikacji decyduje, którego agenta uruchomić dalej. Sterowanie
+wraca do Pythona między krokami, więc możesz dołożyć walidację, pętle czy pytanie do
+użytkownika.
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+
+class Lot(BaseModel):
+    numer_lotu: str
+
+class Miejsce(BaseModel):
+    rzad: int
+    fotel: str
+
+szukaj_lotu = Agent("openai:gpt-5.2", output_type=Lot)
+wybor_miejsca = Agent("openai:gpt-5.2", output_type=Miejsce)
+
+
+def zarezerwuj(zapytanie: str) -> tuple[Lot, Miejsce]:
+    lot = szukaj_lotu.run_sync(zapytanie).output
+    # kod aplikacji decyduje, co dalej
+    miejsce = wybor_miejsca.run_sync(
+        f"Wybierz miejsce dla lotu {lot.numer_lotu}."
+    ).output
+    return lot, miejsce
+```
+
+Różnica jest subtelna, ale istotna. Przy delegacji agent nadrzędny sam wybiera moment
+przekazania. Przy hand-off to ty trzymasz ster i widzisz wynik każdego kroku, zanim ruszy
+następny.
+
+## Grafy z pydantic_graph
+
+Gdy przepływ robi się rozgałęziony, narzędziem z wyższej półki jest `pydantic_graph`.
+Definiujesz węzły jako klasy dziedziczące po `BaseNode`. Metoda `run` każdego węzła zwraca
+albo następny węzeł, albo `End`, gdy graf ma się zatrzymać. Wspólny stan trzymasz w
+obiekcie przekazywanym przez `GraphRunContext`.
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from pydantic_ai import Agent
+from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+
+triage_agent = Agent("openai:gpt-5.2", output_type=bool)
+odpowiedz_agent = Agent("openai:gpt-5.2")
+
+
+@dataclass
+class State:
+    pytanie: str
+
+
+@dataclass
+class Triage(BaseNode[State]):
+    async def run(self, ctx: GraphRunContext[State]) -> Odpowiedz | End[str]:
+        pilne = await triage_agent.run(
+            f"Czy to pytanie wymaga człowieka? {ctx.state.pytanie}"
+        )
+        if pilne.output:
+            return End("Przekazuję do konsultanta.")
+        return Odpowiedz()
+
+
+@dataclass
+class Odpowiedz(BaseNode[State, None, str]):
+    async def run(self, ctx: GraphRunContext[State]) -> End[str]:
+        wynik = await odpowiedz_agent.run(ctx.state.pytanie)
+        return End(wynik.output)
+
+
+graf = Graph(nodes=[Triage, Odpowiedz])
+
+
+async def main() -> None:
+    result = await graf.run(Triage(), state=State(pytanie="Jak zresetować hasło?"))
+    print(result.output)
+    #> Otwórz ustawienia konta i kliknij „Zresetuj hasło".
+```
+
+Węzeł `Triage` kieruje ruch: zwraca `End`, gdy sprawa wymaga człowieka, albo węzeł
+`Odpowiedz` w przeciwnym razie. Typy zwracane przez `run` opisują dozwolone krawędzie
+grafu, więc type checker pilnuje, żeby przepływ był spójny.
+
+<Mermaid
+  caption="Mały graf triażu: rozgałęzienie na podstawie decyzji agenta"
+  chart={`flowchart TD
+    S((start)) --> T[Triage]
+    T -->|pilne| E1([End: do konsultanta])
+    T -->|zwykłe| O[Odpowiedz]
+    O --> E2([End: odpowiedź])`}
+/>
+
+<Callout kind="note">
+Stan grafu (`State`) jest jawny i serializowalny. To nie przypadek: dzięki temu graf da
+się zatrzymać, zapisać i wznowić później. Właśnie na tym opiera się trwałe wykonanie.
+</Callout>
+
+## Trwałe wykonanie
+
+Długie przepływy bywają kruche. Proces może paść w połowie, a model API zwrócić timeout.
+<Term definition="Trwałe wykonanie (durable execution) to uruchamianie przepływu tak, że po awarii wznawia się od ostatniego ukończonego kroku, a nie od zera.">Trwałe wykonanie</Term>
+rozwiązuje to, zapisując każdy ukończony krok. Po awarii przepływ wznawia się od miejsca,
+w którym stanął, a nie od początku.
+
+Pydantic AI integruje się z silnikami takimi jak DBOS i Temporal. Owijasz agenta
+adapterem i dalej używasz zwykłego API `run`, a o trwałość dba silnik pod spodem.
+
+```python
+from dbos import DBOS, DBOSConfig
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.dbos import DBOSAgent
+
+DBOS(config=DBOSConfig(name="geo", system_database_url="sqlite:///dbos.sqlite"))
+
+agent = Agent("openai:gpt-5.2", instructions="Jesteś ekspertem od geografii.", name="geo")
+trwaly_agent = DBOSAgent(agent)
+
+
+async def main() -> None:
+    DBOS.launch()
+    result = await trwaly_agent.run("Jaka jest stolica Meksyku?")
+    print(result.output)
+    #> Stolicą Meksyku jest Meksyk (Ciudad de México).
+```
+
+<Callout kind="warning">
+Trwałe wykonanie wymaga, żeby kroki były deterministyczne i serializowalne. Nie chowaj
+losowości ani zewnętrznych efektów ubocznych wewnątrz węzła bez przemyślenia, jak będą
+wyglądać po wznowieniu.
+</Callout>
+
+## Co dalej
+
+Masz teraz cztery narzędzia do łączenia agentów: delegację, programowy hand-off, grafy i
+trwałe wykonanie. Wybieraj najprostsze, które rozwiązuje problem, i sięgaj po graf dopiero
+przy rozgałęzionym sterowaniu. Działający kod do tego rozdziału, w tym mały graf triażu,
+znajdziesz w `sandbox/10-multi-agent`.
+
+[^poziomy]: Dokumentacja wymienia pięć poziomów: pojedynczy agent, delegacja, hand-off,
+graf i tak zwane deep agents. Tutaj skupiamy się na środkowych trzech.

@@ -1,0 +1,12 @@
+[project]
+name = "ch15-fastapi-integracja"
+version = "0.1.0"
+description = "Chapter 15: FastAPI integration - serving a Pydantic AI agent over HTTP."
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic-ai>=1.0",
+  "pai-sandbox-shared",
+  "fastapi>=0.115",
+  "httpx>=0.27",
+  "uvicorn>=0.30",
+]

@@ -1,0 +1,198 @@
+Modele językowe generują odpowiedź token po tokenie, więc nie musisz czekać na całość,
+zanim cokolwiek pokażesz. Strumieniowanie pozwala wyświetlać tekst w miarę jego
+powstawania, a w przypadku ustrukturyzowanego wyniku - budować obiekt kawałek po kawałku
+i walidować go częściowo. To różnica między interfejsem, który "myśli" przez kilka sekund,
+a takim, który zaczyna odpowiadać natychmiast.
+
+Pydantic AI udostępnia dwa wejścia do strumienia: `run_stream()`, które oddaje gotowe
+fragmenty wyniku, oraz `run_stream_events()`, które pokazuje każde pojedyncze zdarzenie
+przebiegu. Zacznijmy od tego pierwszego, bo to z nim spotkasz się najczęściej.
+
+## Strumień tekstu z run_stream
+
+`run_stream()` jest menedżerem kontekstu asynchronicznego. Otwierasz go przez
+`async with`, a w środku iterujesz po fragmentach. Metoda `stream_text()` domyślnie zwraca
+narastający tekst: każdy kolejny fragment to cały dotychczasowy wynik, a nie tylko nowy
+kawałek.
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="Pisz barwnie, ale rzeczowo.",
+)
+
+
+async def main() -> None:
+    async with agent.run_stream("Opisz w trzech zdaniach Tatry zimą.") as response:
+        async for tekst in response.stream_text():
+            print(tekst)
+            #> Tatry
+            #> Tatry zimą zamieniają się
+            #> Tatry zimą zamieniają się w surowy, biały świat...
+
+
+asyncio.run(main())
+```
+
+Jeśli wolisz dostawać tylko nowe znaki zamiast całego dotychczasowego tekstu, przekaż
+`stream_text(delta=True)`. Wtedy każdy fragment to wyłącznie przyrost i sam sklejasz
+całość.
+
+<Callout kind="note">
+Blok `async with` ma znaczenie. Połączenie z modelem pozostaje otwarte tak długo, jak
+długo czytasz strumień. Po wyjściu z bloku Pydantic AI domyka request i finalizuje wynik.
+Nie wynoś obiektu `response` poza ten blok, bo strumień będzie już zamknięty.
+</Callout>
+
+## Jak płynie strumień
+
+Przepływ jest podobny do zwykłego uruchomienia, ale wynik wraca etapami zamiast w jednym
+kawałku. Agent wysyła zapytanie, model generuje odpowiedź porcjami, a ty konsumujesz je w
+pętli.
+
+<RunFlow
+  title="Przebieg strumieniowego uruchomienia"
+  nodes={[
+    { kind: "user", label: "Zapytanie", detail: "tekst od użytkownika" },
+    { kind: "agent", label: "Agent", detail: "otwiera run_stream" },
+    { kind: "model", label: "Model", detail: "generuje porcjami" },
+    { kind: "output", label: "Fragmenty", detail: "stream_text / stream_output" },
+  ]}
+/>
+
+## Strumieniowanie ustrukturyzowanego wyniku
+
+Najciekawiej robi się, gdy agent ma zwrócić nie tekst, a model Pydantic albo `TypedDict`.
+Wtedy `stream_output()` oddaje kolejne, coraz pełniejsze wersje obiektu. Pydantic AI
+waliduje je <Term definition="Walidacja częściowa sprawdza tylko te pola, które już dotarły, i nie wymaga obecności pozostałych. Dzięki temu niekompletny obiekt nadal przechodzi walidację w trakcie strumieniowania.">częściowo</Term>:
+brakujące pola są na razie tolerowane, więc dostajesz poprawny, choć niepełny obiekt już w
+trakcie generowania.
+
+```python
+import asyncio
+from datetime import date
+
+from typing_extensions import NotRequired, TypedDict
+
+from pydantic_ai import Agent
+
+
+class ProfilUzytkownika(TypedDict):
+    imie: str
+    data_urodzenia: NotRequired[date]
+    bio: NotRequired[str]
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    output_type=ProfilUzytkownika,
+    instructions="Wyłuskaj profil użytkownika z podanego tekstu.",
+)
+
+
+async def main() -> None:
+    tekst = "Mam na imię Ben, urodziłem się 28 stycznia 1990, lubię psy i piramidy."
+    async with agent.run_stream(tekst) as response:
+        async for profil in response.stream_output():
+            print(profil)
+            #> {'imie': 'Ben'}
+            #> {'imie': 'Ben', 'data_urodzenia': date(1990, 1, 28)}
+            #> {'imie': 'Ben', 'data_urodzenia': date(1990, 1, 28), 'bio': 'Lubi psy i piramidy'}
+
+
+asyncio.run(main())
+```
+
+Pola oznaczone jako `NotRequired` mogą się pojawić dopiero w późniejszych fragmentach.
+Gdyby `imie` było wymagane, a model jeszcze go nie wygenerował, walidacja częściowa i tak
+przepuści obiekt, w którym tego pola brakuje, zamiast rzucić wyjątkiem.
+
+<Callout kind="warning">
+Walidacja częściowa rozluźnia reguły tylko podczas strumieniowania. Ostateczny obiekt,
+który dostajesz na końcu, przechodzi pełną walidację. Jeśli pole jest wymagane, a model
+nigdy go nie zwróci, błąd pojawi się przy finalizacji, nie po cichu znika.
+</Callout>
+
+## Walidacja częściowa a efekty uboczne
+
+Skoro ten sam obiekt przelatuje przez walidator wielokrotnie, musisz uważać na efekty
+uboczne. Zapis do bazy danych przy każdym przyroście byłby katastrofą. Pomaga flaga
+`ctx.partial_output`: jest `True` dla wersji pośrednich i `False` dla ostatecznej.
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, RunContext
+
+
+class Rekord(BaseModel):
+    nazwa: str
+    wartosc: int | None = None  # opcjonalne, by przejść walidację częściową
+
+
+def zapisz(ctx: RunContext, rekord: Rekord) -> Rekord:
+    if ctx.partial_output:
+        return rekord  # pomijamy zapis dla wersji pośrednich
+    print(f"Zapis do bazy: {rekord.nazwa} = {rekord.wartosc}")
+    return rekord
+
+
+agent = Agent("openai:gpt-5.2", output_type=zapisz)
+```
+
+Ten sam wzorzec działa w `@agent.output_validator`: gdy `ctx.partial_output` jest `True`,
+zwracasz wynik bez surowych sprawdzeń, a pełne reguły uruchamiasz dopiero na końcu.
+
+## Drobnoziarniste zdarzenia z run_stream_events
+
+Kiedy `stream_text()` i `stream_output()` to za mało, sięgnij po `run_stream_events()`.
+Zwraca strumień zdarzeń obejmujący cały przebieg: start kolejnej części odpowiedzi
+(`PartStartEvent`), przyrosty tekstu (`PartDeltaEvent` z `TextPartDelta`), wywołania
+narzędzi oraz moment, w którym pojawia się wynik końcowy (`FinalResultEvent`).
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import (
+    FinalResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPartDelta,
+)
+
+agent = Agent("openai:gpt-5.2")
+
+
+async def main() -> None:
+    async for zdarzenie in agent.run_stream_events("Wymień trzy rzeki w Polsce."):
+        if isinstance(zdarzenie, PartStartEvent):
+            print(f"[start] część {zdarzenie.index}")
+        elif isinstance(zdarzenie, PartDeltaEvent):
+            if isinstance(zdarzenie.delta, TextPartDelta):
+                print(f"[delta] {zdarzenie.delta.content_delta!r}")
+        elif isinstance(zdarzenie, FinalResultEvent):
+            print("[wynik gotowy]")
+
+
+asyncio.run(main())
+```
+
+Tego poziomu szczegółowości potrzebujesz rzadko, ale jest bezcenny, gdy budujesz własny
+interfejs strumieniowy z osobnym traktowaniem tekstu, wywołań narzędzi i myślenia modelu,
+albo gdy chcesz logować każdy krok przebiegu.[^debounce]
+
+## Co dalej
+
+Umiesz już strumieniować zwykły tekst, budować ustrukturyzowany wynik z walidacją
+częściową i podglądać przebieg zdarzenie po zdarzeniu. W kolejnym rozdziale zajmiemy się
+historią wiadomości i rozmowami wieloturowymi. Działający kod do tego rozdziału znajdziesz
+w `sandbox/08-streaming`.
+
+[^debounce]: Zarówno `stream_output()`, jak i `stream_response()` przyjmują parametr
+`debounce_by`, który grupuje przyrosty w czasie. Ustaw go na `None`, by dostawać każdy
+fragment osobno.

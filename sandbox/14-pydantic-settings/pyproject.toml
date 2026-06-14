@@ -1,0 +1,6 @@
+[project]
+name = "ch14-pydantic-settings"
+version = "0.1.0"
+description = "Chapter 14: pydantic-settings - typed configuration for Pydantic AI agents."
+requires-python = ">=3.12"
+dependencies = ["pydantic-ai>=1.0", "pydantic-settings>=2.5", "pai-sandbox-shared"]

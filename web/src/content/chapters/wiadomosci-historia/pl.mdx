@@ -1,0 +1,155 @@
+Każde uruchomienie agenta produkuje listę wiadomości. To one są prawdziwym zapisem rozmowy:
+co wysłałeś do modelu, co model odpowiedział, jakie narzędzia wywołał po drodze. Jeśli chcesz,
+żeby agent pamiętał poprzednie tury, nie wymyślasz własnego formatu. Bierzesz tę listę z
+jednego uruchomienia i podajesz ją do następnego.
+
+W tym rozdziale rozłożymy strukturę wiadomości na części, zbudujemy rozmowę wieloturową i
+zapiszemy historię do JSON, żeby przetrwała restart procesu albo trafiła do bazy danych.
+
+## Co zwraca uruchomienie
+
+Wynik z `run_sync` (albo `await run`) to nie tylko `output`. Trzyma też pełny zapis wiadomości.
+Masz do niego dwa wejścia, które łatwo pomylić:
+
+- `result.all_messages()` zwraca całą historię, łącznie z wiadomościami przekazanymi na wejściu.
+- `result.new_messages()` zwraca tylko wiadomości powstałe w tym konkretnym uruchomieniu.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent("openai:gpt-5.2", instructions="Bądź pomocnym asystentem.")
+
+result = agent.run_sync("Opowiedz mi dowcip.")
+print(result.output)
+#> Wpadł programista do baru. I jeszcze raz. I jeszcze raz. Pętla.
+
+for message in result.all_messages():
+    print(type(message).__name__)
+#> ModelRequest
+#> ModelResponse
+```
+
+Jedno uruchomienie bez narzędzi daje zwykle dwie wiadomości: jeden `ModelRequest` (to, co
+poszło do modelu) i jeden `ModelResponse` (to, co wróciło).
+
+## Dwa typy wiadomości
+
+Cała historia to lista obiektów typu <Term definition="ModelMessage to wspólny typ dla wiadomości w historii. Konkretnie jest to ModelRequest albo ModelResponse.">`ModelMessage`</Term>, czyli w praktyce
+`ModelRequest` albo `ModelResponse`. Każda wiadomość składa się z części (`parts`), bo jedna
+tura potrafi nieść kilka rzeczy naraz.
+
+| Typ wiadomości | Kierunek | Typowe części (`parts`) |
+| --- | --- | --- |
+| `ModelRequest` | do modelu | `UserPromptPart`, `SystemPromptPart`, `ToolReturnPart` |
+| `ModelResponse` | od modelu | `TextPart`, `ToolCallPart` |
+
+<Callout kind="note">
+Instrukcje (`instructions`) nie są osobną wiadomością. Doczepiają się do `ModelRequest` jako
+pole `instructions` i są podmieniane przy każdym uruchomieniu. Dlatego przekazując starą
+historię dalej, nie wleczesz za sobą nieaktualnych instrukcji. Stary `system_prompt` zostaje
+w historii jako `SystemPromptPart`, co jest ważną różnicą.
+</Callout>
+
+Typy wiadomości i części żyją w `pydantic_ai.messages`. Sięgasz po nie, gdy chcesz ręcznie
+zbudować historię albo przefiltrować ją przed zapisem.
+
+## Prowadzenie rozmowy wieloturowej
+
+Agent sam z siebie jest bezstanowy. Pamięć rozmowy to po prostu lista wiadomości, którą
+przekazujesz parametrem `message_history`. Model widzi wtedy poprzednie tury i może się do nich
+odnieść.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent("openai:gpt-5.2", instructions="Bądź pomocnym asystentem.")
+
+result1 = agent.run_sync("Opowiedz mi dowcip.")
+print(result1.output)
+#> Słyszałeś o skandalu z pastą do zębów? Nazwali to Colgate.
+
+result2 = agent.run_sync(
+    "Wytłumacz?",
+    message_history=result1.new_messages(),
+)
+print(result2.output)
+#> To gra słów: Colgate brzmi jak angielskie "cold gate", czyli zimna brama afery.
+```
+
+Gdy podasz `message_history`, agent doklei nowe pytanie na koniec tej listy i wyśle całość do
+modelu. Bez tego parametru drugie pytanie „Wytłumacz?" wisiałoby w próżni, bo model nie miałby
+pojęcia, o co chodzi.
+
+<RunFlow
+  title="Druga tura korzysta z historii pierwszej"
+  nodes={[
+    { kind: "user", label: "Tura 1", detail: "Opowiedz dowcip" },
+    { kind: "model", label: "Model", detail: "zwraca dowcip" },
+    { kind: "user", label: "Tura 2", detail: "message_history + Wytłumacz?" },
+    { kind: "output", label: "Wynik", detail: "odpowiedź ze zrozumieniem" },
+  ]}
+/>
+
+## Zapis historii do JSON
+
+W prawdziwej aplikacji rozmowa nie żyje w pamięci jednego procesu. Trzeba ją gdzieś odłożyć:
+do bazy, do pliku, do sesji użytkownika. Pydantic AI daje do tego `ModelMessagesTypeAdapter`,
+który zna dokładny kształt wiadomości i potrafi je zwalidować z powrotem.
+
+```python
+from pydantic_core import to_jsonable_python
+
+from pydantic_ai import Agent, ModelMessagesTypeAdapter
+
+agent = Agent("openai:gpt-5.2", instructions="Bądź pomocnym asystentem.")
+
+result1 = agent.run_sync("Opowiedz mi dowcip.")
+
+# Zamiana na zwykłe obiekty Pythona, gotowe do json.dumps albo zapisu w bazie.
+historia = result1.all_messages()
+do_zapisu = to_jsonable_python(historia)
+
+# ... później, w innym procesie albo po restarcie ...
+odczytana = ModelMessagesTypeAdapter.validate_python(do_zapisu)
+
+result2 = agent.run_sync("Inny dowcip poproszę.", message_history=odczytana)
+print(result2.output)
+#> Czemu programiści mylą Halloween z Bożym Narodzeniem? Bo OCT 31 == DEC 25.
+```
+
+Funkcja `to_jsonable_python` z `pydantic_core` rozkłada wiadomości na słowniki, listy i napisy,
+które bez problemu przejdą przez `json.dumps`. W drugą stronę `ModelMessagesTypeAdapter.validate_python`
+odtwarza pełne obiekty `ModelRequest` i `ModelResponse` razem z ich częściami.[^adapter]
+
+<Callout kind="warning">
+Historia rośnie z każdą turą, a wraz z nią liczba tokenów wysyłanych do modelu. Przy długich
+rozmowach przekazuj wybrany wycinek albo streszczenie zamiast całości. Możesz też skorzystać z
+parametru `history_processors`, żeby przyciąć listę przed wysłaniem.
+</Callout>
+
+## Jak elementy układają się w czasie
+
+Diagram poniżej pokazuje, skąd biorą się wiadomości i jak `new_messages` z jednej tury staje
+się wejściem następnej.
+
+<Mermaid
+  caption="Przepływ wiadomości między dwiema turami"
+  chart={`flowchart TD
+    Q1[Pytanie 1] --> R1[Uruchomienie 1]
+    R1 --> M1[ModelRequest + ModelResponse]
+    M1 -->|new_messages| H[(Historia)]
+    H -->|message_history| R2[Uruchomienie 2]
+    Q2[Pytanie 2] --> R2
+    R2 --> O[result.output]`}
+/>
+
+## Co dalej
+
+Umiesz już czytać strukturę wiadomości, prowadzić rozmowę wieloturową i utrwalać historię w
+JSON. To fundament pod czatboty i pod każdy interfejs, który ma pamiętać kontekst. W kolejnym
+rozdziale zajmiemy się narzędziami, które zostawiają w historii własne ślady w postaci
+`ToolCallPart` i `ToolReturnPart`. Działający kod do tego rozdziału znajdziesz w
+`sandbox/07-wiadomosci-historia`.
+
+[^adapter]: `ModelMessagesTypeAdapter` to gotowy `TypeAdapter` z Pydantic, więc masz też do
+dyspozycji `validate_json` i `dump_json`, jeśli wolisz pracować bezpośrednio na bajtach JSON.

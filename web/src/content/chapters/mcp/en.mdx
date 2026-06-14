@@ -1,0 +1,170 @@
+So far you wrote tools yourself, as Python functions living in the same process as the
+agent. MCP (Model Context Protocol) flips that around. It is an open standard that lets an
+agent talk to an external tool server, no matter what language that server is written in or
+where it runs. Your agent becomes an MCP client, and the server hands it a ready-made set
+of tools and resources.
+
+This means you do not have to rewrite the integration with a database, a filesystem, or a
+third-party API every time. You connect a proven MCP server and its tools show up in your
+agent as if you had written them by hand.
+
+## Why MCP at all
+
+Imagine someone already wrote a server that can read files, query a database, or search
+the web. MCP defines a shared language for the agent to ask such a server for the list of
+available tools and then call them. The client and the server can live in different
+languages and on different machines.
+
+<Callout kind="key">
+In Pydantic AI you connect an MCP server as a <Term definition="A toolset is a set of tools the agent can use. An MCP server is one such set, and you pass it through the toolsets parameter.">toolset</Term>, that is, through the
+`toolsets=[...]` parameter on the agent. From the model's point of view, tools from an MCP
+server look exactly like the ones defined with the `@agent.tool` decorator. The model does
+not know, and does not need to know, where they come from.
+</Callout>
+
+## The two transports to learn first
+
+Pydantic AI ships several MCP client classes. Two of them cover most cases, and those are
+the ones to start with.
+
+| Class | Transport | When to use |
+| --- | --- | --- |
+| `MCPServerStdio` | stdio (subprocess) | a server you launch locally as a command |
+| `MCPServerStreamableHTTP` | Streamable HTTP | a remote server reachable at a URL |
+
+`MCPServerStdio` starts the server itself as a subprocess and talks to it over standard
+input and output. `MCPServerStreamableHTTP` connects to a server that already runs
+somewhere and listens at an HTTP address.[^sse]
+
+## A local server over stdio
+
+The simplest setup: the MCP server is a command that Pydantic AI will launch for you. You
+give it the program and its arguments, and the client handles the rest.
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+
+server = MCPServerStdio("python", args=["mcp_server.py"], timeout=10)
+agent = Agent("openai:gpt-5.2", toolsets=[server])
+
+
+async def main() -> None:
+    async with agent:
+        result = await agent.run("What is the weather in Paris?")
+        print(result.output)
+        #> The weather in Paris is sunny and 26 degrees Celsius.
+
+
+asyncio.run(main())
+```
+
+Notice the `async with agent`. This block opens the connection to the server, starts the
+subprocess, and keeps it alive for the duration of the runs. When you leave the block, the
+client cleans up after itself and shuts the subprocess down.
+
+<Callout kind="warning">
+Without the `async with` context the MCP server is never started, and the `agent.run` call
+will find no tools. If you do several runs in a row, keep them inside a single `async with`
+block so you do not start the server over and over.
+</Callout>
+
+## A remote server over Streamable HTTP
+
+When the MCP server already runs somewhere as an HTTP service, you pass only its address.
+The rest of the code stays the same.
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStreamableHTTP
+
+server = MCPServerStreamableHTTP("http://localhost:8000/mcp")
+agent = Agent("openai:gpt-5.2", toolsets=[server])
+
+
+async def main() -> None:
+    async with agent:
+        result = await agent.run("What is 7 plus 5?")
+        print(result.output)
+        #> The answer is 12.
+
+
+asyncio.run(main())
+```
+
+## How a run with an MCP server flows
+
+The first thing the client does after entering `async with` is ask the server for its list
+of tools. Those tools go to the model alongside your own. When the model decides to call a
+server tool, Pydantic AI forwards the call over the MCP protocol and returns the result
+back into the agent loop.
+
+<RunFlow
+  title="An agent run with an MCP server attached"
+  nodes={[
+    { kind: "user", label: "Prompt", detail: "text from the user" },
+    { kind: "agent", label: "Agent", detail: "connects to the MCP server" },
+    { kind: "model", label: "Model", detail: "picks an MCP tool" },
+    { kind: "tool", label: "MCP server", detail: "runs the tool" },
+    { kind: "output", label: "Output", detail: "result.output" },
+  ]}
+/>
+
+<Callout kind="note">
+For the model to use MCP tools at all, it has to be a model that supports tool calling.
+Models without that ability will simply ignore the available toolset and answer with plain
+text.
+</Callout>
+
+## Several servers at once
+
+The `toolsets` parameter takes a list, so you can connect several MCP servers at the same
+time, plus your own tools next to them. A single `async with agent` covers the lifecycle of
+all of them.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP
+
+files = MCPServerStdio("python", args=["files_server.py"], tool_prefix="fs")
+weather = MCPServerStreamableHTTP("http://localhost:8000/mcp", tool_prefix="weather")
+
+agent = Agent("openai:gpt-5.2", toolsets=[files, weather])
+```
+
+The `tool_prefix` parameter adds a prefix to the tool names from a given server. It is
+handy when two servers have a tool with the same name and you want to avoid a collision.
+
+## The connection diagram
+
+<Mermaid
+  caption="An agent acting as a client of several MCP servers"
+  chart={`flowchart TD
+    A[Agent] --> TS[toolsets]
+    TS --> S1[MCPServerStdio]
+    TS --> S2[MCPServerStreamableHTTP]
+    S1 -->|stdio| P[(Local subprocess)]
+    S2 -->|HTTP| R[(Remote service)]
+    A --> T[Your own tools]`}
+/>
+
+<Callout kind="tip">
+Start with a single `MCPServerStdio` launched locally. It is easy to debug because you can
+see the subprocess logs, and the whole thing works without a network. Reach for remote
+servers when the tool is meant to live separately from your application.
+</Callout>
+
+## What is next
+
+You now know how to connect an agent to an MCP server over stdio and over HTTP, why the
+server lifecycle has to be held inside `async with agent`, and how to combine several
+servers in one `toolsets` list. In the next chapter we tackle testing agents without a real
+model. The runnable code for this chapter, together with a small MCP server you can run
+locally, lives in `sandbox/09-mcp`.
+
+[^sse]: Pydantic AI also has `MCPServerSSE` for the older HTTP SSE transport. Prefer
+Streamable HTTP for new code, since SSE is being phased out.

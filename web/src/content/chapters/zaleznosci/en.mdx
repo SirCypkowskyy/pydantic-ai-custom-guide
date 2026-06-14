@@ -1,0 +1,176 @@
+Dependencies are how an agent gets what it needs from the outside: API keys, an HTTP
+client, a database connection, the profile of the signed-in user. Instead of reaching for
+those things through globals, you pass them in explicitly on every run. Pydantic AI calls
+this mechanism dependency injection (DI) and treats it as a first-class, typed part of an
+agent.
+
+If you know `Depends` from FastAPI, the idea is similar, though the machinery is simpler.
+There is no magic container here. There is one dependencies object that you inject at the
+call site and then read through `ctx.deps` inside tools and dynamic instructions.
+
+## Why dependencies at all
+
+An agent rarely works in a vacuum. A tool often has to call a real API, an instruction
+wants the user's name, and an output validator reaches into a database. All of these
+resources share two traits: you build them once per request, and you want to swap them out
+in tests.
+
+<Callout kind="key">
+The heart of DI in Pydantic AI: resources are not baked into the tool's code. You pass
+them in from the outside on every run, and the agent is generic in their type. Because of
+that, the type checker makes sure `ctx.deps` has exactly the shape you expect.
+</Callout>
+
+## The dependencies type and deps_type
+
+You declare dependencies as a single type passed to `deps_type`. In practice this is almost
+always a <Term definition="A dataclass is a lightweight Python class with the @dataclass decorator that auto-generates a constructor and comparisons from its fields. Ideal for grouping dependencies.">dataclass</Term>,
+because it groups a few fields into one readable object and costs nothing.
+
+```python
+from dataclasses import dataclass
+
+import httpx
+
+from pydantic_ai import Agent, RunContext
+
+
+@dataclass
+class AppDeps:
+    api_key: str
+    http_client: httpx.AsyncClient
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    deps_type=AppDeps,
+    instructions="You help the user check the weather. Be concise.",
+)
+```
+
+`deps_type=AppDeps` tells the agent that every run will receive an `AppDeps` object. It is
+a purely typing parameter: it does not create an instance, it only sets the contract. You
+pass the actual instance later, at `run` or `run_sync`.
+
+## Reading dependencies through ctx.deps
+
+Tools and dynamic instructions take a first argument of type `RunContext[AppDeps]`. Through
+`ctx.deps` you get back exactly the object you injected at run time.
+
+```python
+@agent.instructions
+def add_user(ctx: RunContext[AppDeps]) -> str:
+    return f"The current API key is {len(ctx.deps.api_key)} characters long."
+
+
+@agent.tool
+async def get_weather(ctx: RunContext[AppDeps], city: str) -> str:
+    response = await ctx.deps.http_client.get(
+        "https://api.example.com/weather",
+        params={"city": city},
+        headers={"Authorization": f"Bearer {ctx.deps.api_key}"},
+    )
+    response.raise_for_status()
+    return response.text
+
+
+async def main() -> None:
+    async with httpx.AsyncClient() as client:
+        deps = AppDeps(api_key="sk-demo-123", http_client=client)
+        result = await agent.run("What is the weather in Krakow?", deps=deps)
+        print(result.output)
+        #> It is sunny in Krakow, around 21 degrees.
+```
+
+Notice that the HTTP client is created once, in `main`, and the agent only borrows it. The
+tool does not know where that client came from, and that is the whole strength of this
+approach.
+
+<RunFlow
+  title="How dependencies flow through a run"
+  nodes={[
+    { kind: "user", label: "run(deps=...)", detail: "you inject AppDeps" },
+    { kind: "agent", label: "Agent", detail: "wraps deps in RunContext" },
+    { kind: "tool", label: "Tool", detail: "reads ctx.deps" },
+    { kind: "output", label: "Output", detail: "result.output" },
+  ]}
+/>
+
+## Where dependencies land
+
+The same `deps` object is visible in three places: dynamic instructions, tools, and output
+validators. They all receive it through `RunContext`, so you never have to thread it by
+hand from one place to another.
+
+<Mermaid
+  caption="One deps instance feeds every function of the agent"
+  chart={`flowchart TD
+    R["run(deps=AppDeps)"] --> C((RunContext))
+    C --> I[Dynamic instructions]
+    C --> T[Tools]
+    C --> V[Output validators]
+    I --> O[result.output]
+    T --> O
+    V --> O`}
+/>
+
+## Why DI makes agents testable
+
+This is the reason to keep resources in `deps` rather than in globals. In a test you do not
+want to hit a real API or pay for a real model. The `agent.override` method lets you swap
+both, but only for the duration of a `with` block.[^override]
+
+```python
+import pytest
+
+from pydantic_ai import models
+from pydantic_ai.models.test import TestModel
+
+from my_app import AppDeps, agent, run_forecast
+
+
+models.ALLOW_MODEL_REQUESTS = False  # guard against accidental network calls
+
+
+class FakeHttpClient:
+    async def get(self, *args, **kwargs):
+        class R:
+            text = "Sunny, 21 degrees"
+
+            def raise_for_status(self) -> None: ...
+
+        return R()
+
+
+async def test_forecast() -> None:
+    fake_deps = AppDeps(api_key="test-key", http_client=FakeHttpClient())
+    with agent.override(model=TestModel(), deps=fake_deps):
+        result = await run_forecast("What is the weather in Gdansk?")
+    assert "21" in result.output
+```
+
+Thanks to `override(deps=...)`, the production code never knows it got a fake client. Your
+`run_forecast` function calls `agent.run(...)` exactly as it does in production, and you get
+a test with no network, deterministic and fast.
+
+<Callout kind="tip">
+Keep in `deps` the things you want to be able to swap: network clients, database
+connections, clocks, randomness sources. Plain configuration constants that never change
+can stay in the instructions themselves.
+</Callout>
+
+<Callout kind="warning">
+`deps` is not the place for secrets you want the model to see in the prompt text. It is a
+container for Python code. You use the API key from `ctx.deps` in an HTTP request header,
+not by pasting it into the model's instructions.
+</Callout>
+
+## What is next
+
+You now have a typed channel for handing the agent resources from the outside, and you know
+how to swap it in tests. In the next chapter we put `ctx.deps` to full use while building
+tools, where dependencies start doing real work. The runnable code for this chapter lives
+in `sandbox/06-zaleznosci`.
+
+[^override]: `agent.override` works as a context manager and restores the original
+dependencies and model when you leave the `with` block.

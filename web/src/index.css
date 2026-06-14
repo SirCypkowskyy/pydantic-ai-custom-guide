@@ -347,6 +347,15 @@
     background: color-mix(in oklch, var(--muted) 45%, transparent);
   }
 
+  /* Shiki dual-theme: rehype-pretty-code emits --shiki-light / --shiki-dark on each
+     token span. Map them to the active theme so code is actually highlighted. */
+  .mdx-body pre code span {
+    color: var(--shiki-light);
+  }
+  .dark .mdx-body pre code span {
+    color: var(--shiki-dark);
+  }
+
   /* GFM footnotes */
   .mdx-body .footnotes {
     margin-block-start: 3rem;

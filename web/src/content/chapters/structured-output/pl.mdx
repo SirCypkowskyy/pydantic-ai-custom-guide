@@ -1,0 +1,187 @@
+Domyślnie agent zwraca zwykły tekst. To wygodne na demo, ale w prawdziwej aplikacji
+chcesz danych, które da się zapisać do bazy, przekazać do funkcji albo pokazać w UI bez
+zgadywania, co model miał na myśli. W tym rozdziale zmusimy model do zwracania struktury
+zgodnej z modelem Pydantic, a Pydantic AI zadba o walidację i ewentualne poprawki.
+
+Cała sztuczka sprowadza się do jednego parametru: `output_type`. Podajesz model Pydantic,
+a `result.output` przestaje być stringiem i staje się gotowym, otypowanym obiektem.
+
+## Od tekstu do struktury
+
+Wystarczy zdefiniować <Term definition="Model Pydantic to klasa dziedzicząca po BaseModel, która opisuje pola i ich typy. Pydantic waliduje dane wejściowe względem tej definicji.">model Pydantic</Term> i przekazać go jako `output_type`.
+Model dostaje schemat JSON wygenerowany z tej klasy i odpowiada danymi, które do niego pasują.
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+
+
+class Lokalizacja(BaseModel):
+    miasto: str
+    kraj: str
+
+
+agent = Agent("openai:gpt-5.2", output_type=Lokalizacja)
+
+result = agent.run_sync("Gdzie odbyły się igrzyska olimpijskie w 2012 roku?")
+print(result.output)
+#> miasto='Londyn' kraj='Wielka Brytania'
+print(type(result.output))
+#> <class '__main__.Lokalizacja'>
+```
+
+`result.output` jest teraz instancją `Lokalizacja`, a nie tekstem. Twój edytor i type
+checker wiedzą, że ma pola `miasto` i `kraj`, oba typu `str`. To ta sama generyczność,
+o której była mowa przy agencie: `Agent[..., Lokalizacja]` niesie typ wyniku ze sobą.
+
+<Callout kind="key">
+Model Pydantic służy tutaj do dwóch rzeczy naraz. Po pierwsze, jego schemat JSON mówi
+modelowi językowemu, jak ma wyglądać odpowiedź. Po drugie, ta sama definicja waliduje to,
+co faktycznie wróciło. Jedno źródło prawdy dla promptu i dla walidacji.
+</Callout>
+
+## Co się dzieje pod spodem
+
+Kiedy podasz `output_type`, do uruchomienia dochodzi dodatkowy krok. Pydantic AI bierze
+odpowiedź modelu, próbuje ją sparsować i zwalidować względem schematu. Jeśli się uda,
+dostajesz obiekt. Jeśli nie, agent ma jeszcze szansę poprawić błąd.
+
+<RunFlow
+  title="Przebieg uruchomienia z typowanym wyjściem"
+  nodes={[
+    { kind: "user", label: "Zapytanie", detail: "tekst od użytkownika" },
+    { kind: "model", label: "Model", detail: "zwraca dane wg schematu" },
+    { kind: "agent", label: "Walidacja", detail: "Pydantic sprawdza pola" },
+    { kind: "output", label: "Wynik", detail: "instancja modelu" },
+  ]}
+/>
+
+## Walidacja i ModelRetry
+
+Walidacja Pydantic działa tu tak samo jak wszędzie indziej. Jeśli model zwróci pole w złym
+typie albo pominie wymagane pole, walidacja się nie powiedzie. Pydantic AI nie poddaje się
+od razu: odsyła komunikat o błędzie z powrotem do modelu i prosi o poprawioną odpowiedź.
+Liczbę takich prób kontrolujesz parametrem `retries`.
+
+Czasem chcesz dołożyć własną regułę, której nie da się wyrazić samymi typami. Do tego służy
+`@agent.output_validator`. Jeśli dane są nie do przyjęcia, podnieś `ModelRetry` z opisem
+problemu, a model dostanie ten tekst i spróbuje jeszcze raz.
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, ModelRetry
+
+
+class Rezerwacja(BaseModel):
+    liczba_osob: int
+    sala: str
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    output_type=Rezerwacja,
+    retries=2,
+)
+
+
+@agent.output_validator
+def sala_musi_istniec(rez: Rezerwacja) -> Rezerwacja:
+    dostepne = {"A", "B", "C"}
+    if rez.sala not in dostepne:
+        raise ModelRetry(
+            f"Sala {rez.sala!r} nie istnieje. Wybierz jedną z: {sorted(dostepne)}."
+        )
+    return rez
+
+
+result = agent.run_sync("Zarezerwuj salę B dla 4 osób.")
+print(result.output)
+#> liczba_osob=4 sala='B'
+```
+
+<Callout kind="warning">
+`ModelRetry` ma sens tylko przy błędach, które model może naprawić, na przykład zła nazwa
+sali albo wartość spoza dozwolonego zakresu. Przy awarii bazy danych czy braku uprawnień
+podnoś zwykły wyjątek. Ponawianie nic tam nie da, a tylko spali tokeny.
+</Callout>
+
+## Trzy tryby wyjścia
+
+Pod spodem Pydantic AI może wymusić strukturę na trzy sposoby. Domyślnie wybiera najlepszy
+dla danego modelu, ale możesz to nadpisać, owijając typ jednym z markerów.
+
+| Tryb | Marker | Jak działa | Kiedy |
+| --- | --- | --- | --- |
+| Tool | `ToolOutput` | model „wywołuje narzędzie" o schemacie wyniku | domyślny, szerokie wsparcie |
+| Native | `NativeOutput` | natywny structured output dostawcy | gdy model to wspiera, najbardziej niezawodny |
+| Prompted | `PromptedOutput` | schemat wstrzyknięty w prompt jako instrukcja | modele bez wsparcia narzędzi i structured output |
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, NativeOutput
+
+
+class Lokalizacja(BaseModel):
+    miasto: str
+    kraj: str
+
+
+# Wymuszamy natywny structured output zamiast domyślnego trybu narzędziowego.
+agent = Agent(
+    "openai:gpt-5.2",
+    output_type=NativeOutput(Lokalizacja),
+)
+
+result = agent.run_sync("Gdzie leży wieża Eiffla?")
+print(result.output)
+#> miasto='Paryż' kraj='Francja'
+```
+
+Marker zmienia tylko mechanizm, nie sam typ wyniku.[^modes] `result.output` dalej jest
+instancją `Lokalizacja`. Zacznij od wartości domyślnej i sięgaj po `NativeOutput` albo
+`PromptedOutput` tylko wtedy, gdy konkretny model tego wymaga.
+
+## Unie i wiele typów
+
+`output_type` przyjmuje też listę typów albo unię. To wygodne, gdy agent może zwrócić jedną
+z kilku różnych odpowiedzi. Model sam wybiera pasujący wariant, a ty dostajesz otypowany
+obiekt, który możesz rozróżnić przez `isinstance`.
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+
+
+class Sukces(BaseModel):
+    wartosc: float
+
+
+class Blad(BaseModel):
+    powod: str
+
+
+agent = Agent("openai:gpt-5.2", output_type=[Sukces, Blad])
+
+result = agent.run_sync("Ile to 3 podzielone przez 0?")
+print(result.output)
+#> powod='Nie można dzielić przez zero.'
+```
+
+<Callout kind="tip">
+Para „sukces albo błąd" to wygodny wzorzec. Zamiast łapać wyjątek albo parsować tekst,
+agent zwraca jeden z dwóch jasno opisanych kształtów, a resztą zajmuje się normalny kod
+Pythona po stronie wywołania.
+</Callout>
+
+## Co dalej
+
+Umiesz już zmusić agenta do zwracania danych zgodnych z modelem Pydantic, dorzucić własną
+walidację z `ModelRetry` i wybrać tryb wyjścia. W następnym rozdziale podłączymy do tego
+narzędzia, dzięki którym agent będzie mógł sięgać po dane w trakcie uruchomienia. Działający
+kod do tego rozdziału znajdziesz w `sandbox/04-structured-output`.
+
+[^modes]: Pełną listę trybów i ich ograniczeń opisuje dokumentacja Output: https://pydantic.dev/docs/ai/output

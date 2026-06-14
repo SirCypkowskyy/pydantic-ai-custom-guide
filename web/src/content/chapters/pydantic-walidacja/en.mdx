@@ -1,0 +1,235 @@
+Underneath all of Pydantic AI sits plain Pydantic. Before the model generates anything, the
+library describes the input and output with types, then checks that the data really matches
+that description. This chapter is about that foundation: `BaseModel`, field constraints,
+validators, serialization, and `TypeAdapter`. We do not call a language model here - this is
+pure Pydantic, and it runs offline.
+
+Once this clicks, typed agent outputs, validated tool arguments, and parsed responses stop
+feeling like magic. It is all the same machinery.
+
+## BaseModel: a data schema as a class
+
+`BaseModel` is the base class you inherit from to describe the shape of your data. You
+declare fields with type annotations, and Pydantic builds a validator and a serializer from
+them. When you create an instance, the data is checked and, where it is safe, coerced into
+the right type.
+
+```python
+from datetime import datetime
+
+from pydantic import BaseModel
+
+
+class User(BaseModel):
+    id: int
+    name: str = "John Doe"
+    signup_ts: datetime | None = None
+
+
+external = {"id": "123", "signup_ts": "2026-06-01 12:22"}
+user = User(**external)
+
+print(user.id)
+#> 123
+print(type(user.id))
+#> <class 'int'>
+print(user.signup_ts)
+#> 2026-06-01 12:22:00
+```
+
+Notice two things. The string `"123"` became an `int`, and the date text was parsed into a
+`datetime`. Fields without a default are required, and fields with a default become
+optional.
+
+<Callout kind="key">
+Pydantic is not just type hints for humans to read. From your declarations it generates a
+real <Term definition="A validator is type-derived code that checks and coerces incoming data.">validator</Term> in Rust that actually inspects the data on every instance you
+create. A wrong type raises `ValidationError` rather than slipping through silently.
+</Callout>
+
+## Field: constraints beyond the type
+
+A type annotation says what a field is. `Field` adds the conditions a value must satisfy:
+number ranges, string lengths, patterns. The cleanest form uses `Annotated`, so the
+constraint is part of the type rather than the default value.
+
+```python
+from typing import Annotated
+
+from pydantic import BaseModel, Field
+
+
+class Product(BaseModel):
+    sku: Annotated[str, Field(pattern=r"^[A-Z]{3}-\d{4}$")]
+    price: Annotated[float, Field(gt=0)]
+    quantity: Annotated[int, Field(ge=0, le=1000)] = 1
+    tags: Annotated[list[str], Field(max_length=5)] = []
+
+
+item = Product(sku="ABC-1234", price=19.99, quantity=10)
+print(item.price)
+#> 19.99
+```
+
+`gt` means "greater than", `ge` means "greater or equal", `le` means "less or equal". For
+strings you get `min_length`, `max_length`, and `pattern`. These constraints also land in
+the JSON schema that Pydantic AI sends to the model, so the model knows up front which
+values you expect.
+
+## Field validators: your own logic
+
+When `Field` constraints are not enough, you write a custom validator with the
+`@field_validator` decorator. It has two modes. A `before` validator receives the raw input
+and can reshape it before Pydantic checks the type. An `after` validator receives the
+already coerced value and is meant for extra rules.
+
+```python
+from pydantic import BaseModel, ValidationError, field_validator
+
+
+class Order(BaseModel):
+    email: str
+    quantity: int
+
+    @field_validator("email", mode="after")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        if "@" not in value:
+            raise ValueError("email must contain @")
+        return value.lower().strip()
+
+
+order = Order(email="  ANNA@Example.COM ", quantity=3)
+print(order.email)
+#> anna@example.com
+
+try:
+    Order(email="bad-address", quantity=1)
+except ValidationError as err:
+    print(err.error_count())
+    #> 1
+```
+
+An `after` validator can both change the value (here we normalize the email) and reject it
+with `raise ValueError`. Pydantic catches that exception and wraps it in a readable
+`ValidationError` with a path to the exact field.
+
+<Callout kind="warning">
+Inside a validator, raise `ValueError` (or `AssertionError`), not `ValidationError`.
+Pydantic converts it for you into a `ValidationError` with the right field path and error
+type. If you build a `ValidationError` yourself, you bypass that mechanism and the message
+gets worse.
+</Callout>
+
+## Model validator: rules across fields
+
+`@field_validator` sees a single field. When a rule spans several fields at once, you use
+`@model_validator`. In `after` mode you receive the fully validated instance and return
+`self`.
+
+```python
+from pydantic import BaseModel, model_validator
+
+
+class DateRange(BaseModel):
+    start: int
+    end: int
+
+    @model_validator(mode="after")
+    def check_order(self) -> "DateRange":
+        if self.end < self.start:
+            raise ValueError("end cannot be before start")
+        return self
+
+
+span = DateRange(start=1, end=5)
+print(span.end - span.start)
+#> 4
+```
+
+Order matters: field validators run first, so inside an `after` model validator you can be
+sure `start` and `end` are already valid integers.
+
+## Computed fields and serialization
+
+Sometimes a value follows from other fields and you do not want to store it or accept it as
+input. That is what `@computed_field` is for. It shows up in the serialized output but is
+not an input field.
+
+```python
+from pydantic import BaseModel, computed_field
+
+
+class Box(BaseModel):
+    width: float
+    height: float
+    depth: float
+
+    @computed_field
+    @property
+    def volume(self) -> float:
+        return self.width * self.height * self.depth
+
+
+box = Box(width=2, height=3, depth=4)
+print(box.model_dump())
+#> {'width': 2.0, 'height': 3.0, 'depth': 4.0, 'volume': 24.0}
+print(box.model_dump_json())
+#> {"width":2.0,"height":3.0,"depth":4.0,"volume":24.0}
+```
+
+Serialization is the way back out. `model_dump()` gives a Python dict, `model_dump_json()`
+gives a JSON string. Going the other way you have `model_validate()` (from a dict) and
+`model_validate_json()` (from a JSON string), both of which run full validation.
+
+<RunFlow
+  title="Validation and serialization, both ways"
+  nodes={[
+    { kind: "user", label: "Raw data", detail: "dict or JSON" },
+    { kind: "model", label: "model_validate", detail: "checks and coerces" },
+    { kind: "agent", label: "Instance", detail: "typed object" },
+    { kind: "output", label: "model_dump", detail: "back to dict or JSON" },
+  ]}
+/>
+
+## TypeAdapter: validation without BaseModel
+
+You do not always want a whole class. When you need to validate a list, a dict, or a
+`TypedDict`, `TypeAdapter` gives you the same power for any type annotation.
+
+```python
+from pydantic import TypeAdapter
+
+adapter = TypeAdapter(list[int])
+
+print(adapter.validate_python(["1", 2, "3"]))
+#> [1, 2, 3]
+print(adapter.validate_json("[10, 20, 30]"))
+#> [10, 20, 30]
+print(adapter.dump_json([1, 2, 3]))
+#> b'[1,2,3]'
+```
+
+This is exactly the mechanism Pydantic AI uses to validate tool arguments and parse
+structured outputs. Every `output_type` you hand an agent ends up as a schema built by this
+same machinery.[^schema]
+
+<Mermaid
+  caption="From a type declaration to a ready validator"
+  chart={`flowchart TD
+    A[Type annotations] --> B[Core schema]
+    B --> C[Rust validator]
+    B --> D[Serializer]
+    B --> E[JSON schema]
+    C -->|model_validate| F((Instance))
+    F -->|model_dump| D`}
+/>
+
+## What is next
+
+You now have the full set of basics: `BaseModel`, `Field` constraints, field and model
+validators, computed fields, and `TypeAdapter`. Every typed agent output and every tool
+later in this guide rests on them. The runnable code for this chapter, which you can run
+without an API key, lives in `sandbox/13-pydantic-walidacja`.
+
+[^schema]: You can pull any model's JSON schema with `Model.model_json_schema()`.

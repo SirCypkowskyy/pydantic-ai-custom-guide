@@ -1,0 +1,6 @@
+[project]
+name = "ch09-mcp"
+version = "0.1.0"
+description = "Chapter 9: MCP - connecting an agent to a Model Context Protocol server."
+requires-python = ">=3.12"
+dependencies = ["pydantic-ai>=1.0", "pai-sandbox-shared", "mcp>=1.0"]

@@ -1,0 +1,165 @@
+When an agent runs locally in a script, you can see everything in the terminal. The trouble
+starts once the agent calls tools, retries, and bounces between the model and your code,
+while all you have is a single line of `result.output`. Observability is how you look inside
+that loop and see every step, how long it took, and what it cost.
+
+Pydantic AI has built-in (but optional) support for Logfire. If the `logfire` package is
+installed and configured, detailed information about agent runs is sent to Logfire. If it is
+not, there is virtually no overhead and nothing leaves your machine.
+
+## Why observability at all
+
+<Term definition="Observability is the ability to understand what is happening inside a system from the data it exposes on the outside: traces, metrics, and logs.">Observability</Term>
+is not the same as a plain print. An LLM agent is non-deterministic: the same prompt may
+call a tool one time and not the next, may cost 200 tokens once and 2000 another time.
+Without a view into the run it is hard to answer simple questions: why was this reply slow,
+which tool failed, how much did one run cost.
+
+<Callout kind="key">
+In LLM applications the real cost is tokens, not CPU cycles. Every agent run is money. That
+is why tracking token usage at the level of an individual span is one of the most valuable
+things Logfire gives you.
+</Callout>
+
+## The two lines that turn it on
+
+Logfire is built on <Term definition="OpenTelemetry (OTel) is an open standard for collecting traces, metrics, and logs. Data in this format can be sent to any compatible backend, not just Logfire.">OpenTelemetry</Term>,
+so the data it collects is in a standard format. Setup comes down to two calls: one
+configures the SDK, the other wires up Pydantic AI instrumentation.
+
+```python
+import logfire
+
+from pydantic_ai import Agent
+
+logfire.configure()              # configures the Logfire SDK
+logfire.instrument_pydantic_ai() # instruments every agent from here on
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="Be concise, reply with one sentence.",
+)
+
+result = agent.run_sync('Where does "hello world" come from?')
+print(result.output)
+#> The phrase was popularized by a 1974 C programming textbook.
+```
+
+`instrument_pydantic_ai()` works globally: it instruments every agent created from that
+point on. If you want to cover a single agent only, pass instrumentation through
+`capabilities=[...]` at creation time instead of calling the function globally.
+
+## What Logfire sees during a run
+
+Each agent run becomes a tree of <Term definition="A span is a single unit of work in a trace: it has a name, a start time, a duration, and attributes. Spans nest inside each other to form a tree.">spans</Term>.
+The top span is the whole run. Under it sit the model calls, and under those sits each tool
+that was called. This makes it obvious where the time went and how many tokens each step
+consumed.
+
+<RunFlow
+  title="Spans during one run that calls a tool"
+  nodes={[
+    { kind: "user", label: "Prompt", detail: "span: agent run" },
+    { kind: "model", label: "Model call", detail: "span: chat openai" },
+    { kind: "tool", label: "Tool", detail: "span: tool call" },
+    { kind: "model", label: "Second call", detail: "span: chat openai" },
+    { kind: "output", label: "Output", detail: "result.output" },
+  ]}
+/>
+
+Tools land in the trace automatically. The agent below has one tool, and in Logfire you
+will see a separate span for its call, together with the arguments and the result.
+
+```python
+import logfire
+
+from pydantic_ai import Agent, RunContext
+
+logfire.configure()
+logfire.instrument_pydantic_ai()
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="You help check the weather.",
+)
+
+
+@agent.tool
+def temperature(ctx: RunContext[None], city: str) -> str:
+    # In real code this would call a weather API.
+    return f"It is 18 degrees in {city}."
+
+
+result = agent.run_sync("What is the temperature in Krakow?")
+print(result.output)
+#> It is currently 18 degrees in Krakow.
+```
+
+## Export to any OTel backend
+
+You do not have to send data to the Logfire cloud. Because everything sits on OpenTelemetry,
+you can point traces at any compatible collector: a local `otel-tui`, Jaeger, or your
+company backend. Just turn off sending to Logfire and set the OTLP endpoint.
+
+```python
+import os
+
+import logfire
+
+from pydantic_ai import Agent
+
+os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4318"
+logfire.configure(send_to_logfire=False)  # do not send to the Logfire cloud
+logfire.instrument_pydantic_ai()
+logfire.instrument_httpx(capture_all=True)  # add raw HTTP requests too
+
+agent = Agent("openai:gpt-5.2")
+result = agent.run_sync("What is the capital of France?")
+print(result.output)
+#> Paris
+```
+
+<Callout kind="tip">
+`logfire.instrument_httpx(capture_all=True)` adds raw HTTP requests and responses to the
+trace. That is a big help when debugging odd model-provider errors, but be careful: payloads
+can hold sensitive data and keys. Enable it deliberately in production.
+</Callout>
+
+## How it fits together
+
+Instrumentation is wired in once, at application startup. After that every agent emits
+spans, and the SDK exports them to your chosen backend. The same stream of data feeds both
+the debugging view and your production alerts.
+
+<Mermaid
+  caption="The path of data from the agent to the observability backend"
+  chart={`flowchart TD
+    A[Agent run] -->|emits spans| I[OTel instrumentation]
+    T[Tools] -->|spans| I
+    M[Model calls] -->|spans + tokens| I
+    I -->|OTLP export| L[Logfire]
+    I -->|OTLP export| O[Other OTel backend]`}
+/>
+
+## Enable it deliberately
+
+Instrumentation is cheap, but not free where privacy is concerned. Spans can carry prompt
+content, tool arguments, and model responses. In an environment where personal data flows
+through the agent, agree with your team on what you actually want to record.[^pii]
+
+<Callout kind="warning">
+Do not treat Logfire like a `print` scattered across the code. Configure instrumentation
+once, in a single place at application startup. Repeating `logfire.configure()` across many
+modules leads to duplicated traces and needless confusion.
+</Callout>
+
+## What is next
+
+You now have a view into what the agent does inside: spans for runs, model calls, and tools,
+token usage, and export to any OTel backend. This is the foundation you build production
+monitoring on. The runnable code for this chapter, including a setup with sending to Logfire
+disabled (when no token is present), lives in `sandbox/12-logfire-observability`.
+
+[^pii]: Logfire lets you disable capturing message content if you need to meet data
+protection requirements. The Logfire debugging and monitoring documentation covers the
+details.

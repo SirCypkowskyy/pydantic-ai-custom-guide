@@ -1,0 +1,235 @@
+Pod całym Pydantic AI siedzi zwykłe Pydantic. Zanim model cokolwiek wygeneruje, biblioteka
+opisuje typami wejście i wyjście, a potem sprawdza, czy dane naprawdę pasują do tego opisu.
+Ten rozdział jest o samym fundamencie: o `BaseModel`, ograniczeniach pól, walidatorach,
+serializacji i `TypeAdapter`. Nie wywołujemy tu modelu językowego - to czyste Pydantic,
+które działa offline.
+
+Gdy to zrozumiesz, typowane wyniki agenta, walidacja argumentów narzędzi i parsowanie
+odpowiedzi przestaną być magią. To wszystko ta sama maszyneria.
+
+## BaseModel: schemat danych w postaci klasy
+
+`BaseModel` to klasa bazowa, po której dziedziczysz, żeby opisać kształt danych. Pola
+deklarujesz adnotacjami typów, a Pydantic na ich podstawie buduje walidator i serializer.
+Przy tworzeniu instancji dane są sprawdzane, a tam, gdzie to bezpieczne, koercjonowane do
+właściwego typu.
+
+```python
+from datetime import datetime
+
+from pydantic import BaseModel
+
+
+class User(BaseModel):
+    id: int
+    name: str = "Jan Kowalski"
+    signup_ts: datetime | None = None
+
+
+external = {"id": "123", "signup_ts": "2026-06-01 12:22"}
+user = User(**external)
+
+print(user.id)
+#> 123
+print(type(user.id))
+#> <class 'int'>
+print(user.signup_ts)
+#> 2026-06-01 12:22:00
+```
+
+Zwróć uwagę na dwie rzeczy. Łańcuch `"123"` stał się liczbą `int`, a tekst z datą został
+sparsowany do `datetime`. Pola bez wartości domyślnej są wymagane, a pola z domyślną stają
+się opcjonalne.
+
+<Callout kind="key">
+Pydantic nie jest tylko adnotacjami typów do czytania przez człowieka. Z deklaracji
+generuje realny <Term definition="Walidator to wygenerowany na podstawie typów kod, który sprawdza i koercjonuje dane wejściowe.">walidator</Term> w Rust, który przy każdym tworzeniu instancji
+faktycznie sprawdza dane. Błędny typ kończy się wyjątkiem `ValidationError`, a nie cichym
+przejściem dalej.
+</Callout>
+
+## Field: ograniczenia poza samym typem
+
+Adnotacja typu mówi, czym pole jest. `Field` dokłada warunki, które wartość musi spełnić:
+zakresy liczb, długości łańcuchów, wzorce. Najczystszy zapis korzysta z `Annotated`, dzięki
+czemu ograniczenie jest częścią typu, a nie wartością domyślną.
+
+```python
+from typing import Annotated
+
+from pydantic import BaseModel, Field
+
+
+class Product(BaseModel):
+    sku: Annotated[str, Field(pattern=r"^[A-Z]{3}-\d{4}$")]
+    price: Annotated[float, Field(gt=0)]
+    quantity: Annotated[int, Field(ge=0, le=1000)] = 1
+    tags: Annotated[list[str], Field(max_length=5)] = []
+
+
+item = Product(sku="ABC-1234", price=19.99, quantity=10)
+print(item.price)
+#> 19.99
+```
+
+`gt` to "większe niż", `ge` to "większe lub równe", `le` to "mniejsze lub równe". Dla
+łańcuchów masz `min_length`, `max_length` i `pattern`. Te ograniczenia trafiają też do
+schematu JSON, który Pydantic AI wysyła do modelu, więc model od razu wie, jakich wartości
+oczekujesz.
+
+## Walidatory pól: własna logika
+
+Gdy ograniczenia z `Field` nie wystarczają, piszesz własny walidator dekoratorem
+`@field_validator`. Ma on dwa tryby. Walidator `before` dostaje surowe wejście i może je
+przekształcić, zanim Pydantic sprawdzi typ. Walidator `after` dostaje już skoercjonowaną
+wartość i służy do dodatkowych reguł.
+
+```python
+from pydantic import BaseModel, ValidationError, field_validator
+
+
+class Order(BaseModel):
+    email: str
+    quantity: int
+
+    @field_validator("email", mode="after")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        if "@" not in value:
+            raise ValueError("adres email musi zawierać @")
+        return value.lower().strip()
+
+
+order = Order(email="  ANNA@Example.COM ", quantity=3)
+print(order.email)
+#> anna@example.com
+
+try:
+    Order(email="zly-adres", quantity=1)
+except ValidationError as err:
+    print(err.error_count())
+    #> 1
+```
+
+Walidator `after` może zarówno zmienić wartość (tu normalizujemy email), jak i odrzucić ją
+przez `raise ValueError`. Pydantic łapie ten wyjątek i opakowuje go w czytelny
+`ValidationError` ze ścieżką do konkretnego pola.
+
+<Callout kind="warning">
+W walidatorze zgłaszaj `ValueError` (lub `AssertionError`), a nie `ValidationError`.
+Pydantic sam zamienia je na `ValidationError` z poprawną ścieżką pola i typem błędu. Jeśli
+sam stworzysz `ValidationError`, ominiesz ten mechanizm i komunikat będzie gorszy.
+</Callout>
+
+## Walidator modelu: reguły między polami
+
+`@field_validator` widzi jedno pole. Gdy reguła dotyczy kilku pól naraz, używasz
+`@model_validator`. W trybie `after` dostajesz gotową, zwalidowaną instancję i zwracasz
+`self`.
+
+```python
+from pydantic import BaseModel, model_validator
+
+
+class DateRange(BaseModel):
+    start: int
+    end: int
+
+    @model_validator(mode="after")
+    def check_order(self) -> "DateRange":
+        if self.end < self.start:
+            raise ValueError("end nie może być przed start")
+        return self
+
+
+span = DateRange(start=1, end=5)
+print(span.end - span.start)
+#> 4
+```
+
+Kolejność jest istotna: walidatory pól biegną pierwsze, więc w walidatorze modelu w trybie
+`after` masz pewność, że `start` i `end` to już poprawne liczby.
+
+## Pole obliczane i serializacja
+
+Czasem wartość wynika z innych pól i nie chcesz jej przechowywać ani przyjmować na wejściu.
+Do tego służy `@computed_field`. Pojawia się w wyniku serializacji, ale nie jest polem
+wejściowym.
+
+```python
+from pydantic import BaseModel, computed_field
+
+
+class Box(BaseModel):
+    width: float
+    height: float
+    depth: float
+
+    @computed_field
+    @property
+    def volume(self) -> float:
+        return self.width * self.height * self.depth
+
+
+box = Box(width=2, height=3, depth=4)
+print(box.model_dump())
+#> {'width': 2.0, 'height': 3.0, 'depth': 4.0, 'volume': 24.0}
+print(box.model_dump_json())
+#> {"width":2.0,"height":3.0,"depth":4.0,"volume":24.0}
+```
+
+Serializacja to droga powrotna. `model_dump()` daje słownik Pythona, `model_dump_json()`
+daje łańcuch JSON. W drugą stronę masz `model_validate()` (ze słownika) i
+`model_validate_json()` (z łańcucha JSON), które przeprowadzają pełną walidację.
+
+<RunFlow
+  title="Walidacja i serializacja w obie strony"
+  nodes={[
+    { kind: "user", label: "Surowe dane", detail: "dict albo JSON" },
+    { kind: "model", label: "model_validate", detail: "sprawdza i koercjonuje" },
+    { kind: "agent", label: "Instancja", detail: "typowany obiekt" },
+    { kind: "output", label: "model_dump", detail: "z powrotem dict albo JSON" },
+  ]}
+/>
+
+## TypeAdapter: walidacja bez BaseModel
+
+Nie zawsze chcesz całą klasę. Kiedy potrzebujesz zwalidować listę, słownik albo `TypedDict`,
+`TypeAdapter` daje tę samą moc dla dowolnej adnotacji typu.
+
+```python
+from pydantic import TypeAdapter
+
+adapter = TypeAdapter(list[int])
+
+print(adapter.validate_python(["1", 2, "3"]))
+#> [1, 2, 3]
+print(adapter.validate_json("[10, 20, 30]"))
+#> [10, 20, 30]
+print(adapter.dump_json([1, 2, 3]))
+#> b'[1,2,3]'
+```
+
+To dokładnie ten mechanizm, którym Pydantic AI waliduje argumenty narzędzi i parsuje
+ustrukturyzowane wyniki. Każdy `output_type`, który podasz agentowi, kończy jako schemat
+zbudowany przez tę samą maszynerię.[^schema]
+
+<Mermaid
+  caption="Od deklaracji typu do gotowego walidatora"
+  chart={`flowchart TD
+    A[Adnotacje typów] --> B[Schemat rdzenia]
+    B --> C[Walidator w Rust]
+    B --> D[Serializer]
+    B --> E[Schemat JSON]
+    C -->|model_validate| F((Instancja))
+    F -->|model_dump| D`}
+/>
+
+## Co dalej
+
+Masz już komplet podstaw: `BaseModel`, ograniczenia `Field`, walidatory pól i modelu, pola
+obliczane oraz `TypeAdapter`. To na nich opiera się każdy typowany wynik agenta i każde
+narzędzie w dalszej części przewodnika. Działający kod do tego rozdziału, który uruchomisz
+bez klucza API, znajdziesz w `sandbox/13-pydantic-walidacja`.
+
+[^schema]: Z każdego modelu wyciągniesz jego schemat JSON metodą `Model.model_json_schema()`.

@@ -1,0 +1,178 @@
+Agent jest w Pydantic AI jednolity, ale model, który stoi za nim, możesz wymieniać do woli.
+Ten sam kod uruchomisz na OpenAI, Anthropic, Google albo na lokalnej Ollamie, zmieniając
+tylko jedną linijkę. W tym rozdziale pokazujemy, jak adresować modele różnych dostawców,
+jak dostroić ich zachowanie ustawieniami oraz jak zbudować fallback, gdy główny model
+zawiedzie.
+
+## Identyfikator modelu
+
+Najprostszy sposób na wskazanie modelu to ciąg w formacie `dostawca:nazwa`. Pierwsza część
+to <Term definition="Dostawca (provider) to usługa, która udostępnia model przez API, na przykład OpenAI, Anthropic czy Google.">dostawca</Term>,
+druga to konkretna nazwa modelu u tego dostawcy.
+
+```python
+from pydantic_ai import Agent
+
+# Każda z tych linii wskazuje innego dostawcę
+agent_openai = Agent("openai:gpt-5.2")
+agent_anthropic = Agent("anthropic:claude-sonnet-4-5")
+agent_google = Agent("google:gemini-3-flash-preview")
+```
+
+Pydantic AI sam dobierze odpowiednią klasę modelu i wczyta klucz API ze zmiennej
+środowiskowej (na przykład `OPENAI_API_KEY`). Dopóki trzymasz się tego formatu, przełączanie
+dostawcy to zmiana jednego stringa.
+
+<Callout kind="note">
+Każdy dostawca ma własną zmienną z kluczem: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`GOOGLE_API_KEY`. Jeśli wolisz nie polegać na środowisku, możesz przekazać klucz wprost
+przez obiekt providera, co pokazujemy niżej przy Ollamie.
+</Callout>
+
+## Ustawienia modelu
+
+`ModelSettings` to wspólny zestaw parametrów, które wpływają na to, jak model generuje
+odpowiedź. Dwa, których użyjesz najczęściej, to `temperature` (im niżej, tym bardziej
+przewidywalnie) i `max_tokens` (górny limit długości odpowiedzi).
+
+```python
+from pydantic_ai import Agent, ModelSettings
+
+agent = Agent(
+    "openai:gpt-5.2",
+    instructions="Odpowiadaj rzeczowo.",
+    model_settings=ModelSettings(temperature=0.2, max_tokens=500),
+)
+
+# Ustawienia możesz też nadpisać dla pojedynczego uruchomienia
+result = agent.run_sync(
+    "Wymień trzy zalety typowania w Pythonie.",
+    model_settings=ModelSettings(temperature=0.0),
+)
+print(result.output)
+```
+
+Ustawienia przekazane do `run_sync` mają pierwszeństwo przed tymi z konstruktora, więc
+możesz mieć rozsądne wartości domyślne na poziomie agenta i dostrajać je tam, gdzie trzeba.
+
+## Fallback, gdy model zawiedzie
+
+W produkcji jeden dostawca to pojedynczy punkt awarii. `FallbackModel` owija kilka modeli
+w kolejności i próbuje następnego, kiedy poprzedni zwróci błąd (na przykład zły klucz albo
+chwilowa niedostępność API).
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.openai import OpenAIChatModel
+
+glowny = OpenAIChatModel("gpt-5.2")
+zapasowy = AnthropicModel("claude-sonnet-4-5")
+
+model = FallbackModel(glowny, zapasowy)
+agent = Agent(model)
+
+result = agent.run_sync("Jaka jest stolica Francji?")
+print(result.output)
+#> Paryż
+```
+
+Modele próbowane są od lewej do prawej. Pierwszy, który odpowie bez błędu, wygrywa, a jego
+nazwa trafia do historii wiadomości, więc zawsze wiesz, kto faktycznie odpowiedział.
+
+<RunFlow
+  title="Jak FallbackModel wybiera model"
+  nodes={[
+    { kind: "user", label: "Zapytanie", detail: "tekst od użytkownika" },
+    { kind: "model", label: "OpenAI", detail: "próba pierwsza" },
+    { kind: "model", label: "Anthropic", detail: "próba po błędzie" },
+    { kind: "output", label: "Wynik", detail: "pierwsza udana odpowiedź" },
+  ]}
+/>
+
+Każdemu modelowi w łańcuchu możesz nadać własne ustawienia. To wygodne, gdy jeden dostawca
+lubi wyższą temperaturę, a drugi niższą.
+
+```python
+from pydantic_ai import ModelSettings
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.openai import OpenAIChatModel
+
+glowny = OpenAIChatModel(
+    "gpt-5.2",
+    settings=ModelSettings(temperature=0.7, max_tokens=1000),
+)
+zapasowy = AnthropicModel(
+    "claude-sonnet-4-5",
+    settings=ModelSettings(temperature=0.2, max_tokens=1000),
+)
+
+model = FallbackModel(glowny, zapasowy)
+```
+
+## Ollama Cloud i API zgodne z OpenAI
+
+Wielu dostawców (w tym Ollama Cloud) wystawia API zgodne z formatem OpenAI. Łączysz się z
+nimi przez `OpenAIChatModel` z jawnie skonfigurowanym `OpenAIProvider`, podając `base_url`
+i `api_key`. Tak właśnie działa katalog `sandbox` w tym przewodniku.[^sandbox]
+
+```python
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    "gpt-oss:120b",
+    provider=OpenAIProvider(
+        base_url="https://ollama.com/v1",
+        api_key=os.environ["OLLAMA_API_KEY"],
+    ),
+)
+
+agent = Agent(model, instructions="Odpowiadaj zwięźle po polsku.")
+
+result = agent.run_sync("Czym jest Ollama Cloud w jednym zdaniu?")
+print(result.output)
+```
+
+<Callout kind="tip">
+Ten sam wzorzec działa dla każdego endpointu zgodnego z OpenAI: zmień `base_url` i
+`api_key`, a resztę kodu zostaw bez zmian. Dla lokalnej Ollamy podałbyś
+`http://localhost:11434/v1` i dowolny klucz, bo lokalny serwer go nie sprawdza.
+</Callout>
+
+## Mapa wyboru modelu
+
+Poniższy diagram podsumowuje, jak zdecydować, którą drogą podłączyć model.
+
+<Mermaid
+  caption="Jak adresować model w Pydantic AI"
+  chart={`flowchart TD
+    A[Chcę podłączyć model] --> B{Standardowy dostawca?}
+    B -->|tak| C["string dostawca:nazwa"]
+    B -->|nie, API zgodne z OpenAI| D["OpenAIChatModel + OpenAIProvider"]
+    C --> E{Potrzebuję zapasu?}
+    D --> E
+    E -->|tak| F[FallbackModel]
+    E -->|nie| G[Gotowe]`}
+/>
+
+<Callout kind="warning">
+`FallbackModel` przełącza się tylko przy błędach po stronie modelu, takich jak odrzucone
+żądanie czy niedostępność. Nie ratuje przed błędami w Twoim kodzie ani przed niepoprawną
+walidacją wyniku, bo to nie są problemy dostawcy.
+</Callout>
+
+## Co dalej
+
+Umiesz już adresować modele różnych dostawców, dostrajać je przez `ModelSettings` i budować
+odporny łańcuch z `FallbackModel`. W kolejnym rozdziale wrócimy do narzędzi i pokażemy, jak
+model sam decyduje, kiedy je wywołać. Działający kod do tego rozdziału, w tym połączenie z
+Ollama Cloud, znajdziesz w `sandbox/03-modele`.
+
+[^sandbox]: Wszystkie przykłady w `sandbox` korzystają z Ollama Cloud, żeby dało się je
+uruchomić bez płatnego konta u dużych dostawców.

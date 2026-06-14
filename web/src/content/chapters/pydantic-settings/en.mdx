@@ -1,0 +1,183 @@
+Every serious application eventually needs configuration: an API key, a database address, a
+model name, a debug flag. You can read all of it by hand with `os.getenv`, but that quickly
+turns into a tangle of strings with no validation and no types. The `pydantic-settings`
+library solves this the Pydantic way - you describe your configuration as a typed class, and
+it loads the values from environment variables and `.env` files for you.
+
+This is exactly the mechanism we use in the `sandbox` directory to load
+`OLLAMA_CLOUD_API_KEY` and pick a model for the examples. Instead of scattered `os.getenv`
+calls, we get one typed settings object.
+
+## Why a separate library
+
+Pydantic validates data coming into your program. `pydantic-settings` is an extension that
+treats the runtime environment as another source of that data. You define a class that
+inherits from <Term definition="BaseSettings is the base class from pydantic-settings. It behaves like a normal Pydantic model but automatically reads field values from environment variables and other sources.">`BaseSettings`</Term>, and when you instantiate it the library queries
+several sources in order and assembles a finished, validated object.
+
+<Callout kind="key">
+A plain Pydantic model gets the data you hand it. `BaseSettings` goes one step further: if
+you do not pass a value in code, it reaches for environment variables, the `.env` file, and
+a secrets directory. That is why the same code runs locally and in production without
+changes - only the environment differs.
+</Callout>
+
+## Your first settings
+
+The simplest configuration is a class with fields and a single `model_config` block that
+tells it where to read the `.env` file from.
+
+```python
+from pydantic import SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    ollama_cloud_api_key: SecretStr
+    ollama_model: str = "gemma3:12b"
+    debug: bool = False
+
+
+settings = Settings()
+print(settings.ollama_model)
+#> gemma3:12b
+print(settings.ollama_cloud_api_key)
+#> **********
+```
+
+Field names map to environment variables case-insensitively, so the `ollama_cloud_api_key`
+field reads from `OLLAMA_CLOUD_API_KEY`. The `ollama_model` field has a default, so it is
+optional. A field without a default is required - if it is missing, creating `Settings()`
+raises a readable `ValidationError`.
+
+## Source order
+
+`BaseSettings` does not read from one place. It has a fixed priority order in which an
+earlier source wins over a later one. This lets you override a value from `.env` with an
+environment variable, and override that in turn with an argument passed straight to the
+constructor.
+
+<RunFlow
+  title="Where BaseSettings gets values (highest priority first)"
+  nodes={[
+    { kind: "user", label: "Arguments", detail: "Settings(debug=True)" },
+    { kind: "agent", label: "Environment variables", detail: "os.environ" },
+    { kind: "tool", label: ".env file", detail: "env_file" },
+    { kind: "model", label: "Secrets directory", detail: "secrets_dir" },
+    { kind: "output", label: "Defaults", detail: "from field definitions" },
+  ]}
+/>
+
+Because of this order, configuration behaves predictably. Locally you keep values in `.env`,
+in production you inject them through environment variables, and in tests you simply pass
+them straight to the constructor.
+
+## Nested models
+
+Configuration is rarely flat. Related settings are worth grouping into their own models.
+`pydantic-settings` handles this with a delimiter that separates levels inside the
+environment variable name.
+
+```python
+from pydantic import BaseModel, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class DatabaseSettings(BaseModel):
+    host: str = "localhost"
+    port: int = 5432
+    password: SecretStr
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_nested_delimiter="__",
+    )
+
+    database: DatabaseSettings
+
+
+# DATABASE__HOST=db.example.com  ->  settings.database.host
+# DATABASE__PASSWORD=secret       ->  settings.database.password
+settings = Settings()
+print(settings.database.port)
+#> 5432
+```
+
+Notice that `DatabaseSettings` inherits from a plain `BaseModel`, not from `BaseSettings`.
+The nested model does not read the environment on its own - the parent class does it for it,
+using the double underscore as the level separator.
+
+## Secrets and SecretStr
+
+API keys and passwords should not leak into logs or into `print(settings)`. The `SecretStr`
+type from Pydantic protects against this by default: its representation is a row of
+asterisks, and you pull out the real value only through `get_secret_value()`.
+
+<Callout kind="warning">
+`SecretStr` guards against accidental leaks in logs and error messages, but it does not
+encrypt the data in memory. You reveal the real secret deliberately with
+`get_secret_value()` - and only where you actually need it, for example when building an
+HTTP client.
+</Callout>
+
+```python
+from pai_sandbox_shared import Settings
+
+settings = Settings()
+
+# Safe: logs show only asterisks.
+print(f"Config: {settings!r}")
+
+# Deliberate reveal where the value is needed.
+api_key = settings.ollama_cloud_api_key.get_secret_value()
+```
+
+## The full picture
+
+The diagram below shows how `BaseSettings` connects the class definition with the data
+sources and hands back a finished, typed object.
+
+<Mermaid
+  caption="From class definition to a validated settings object"
+  chart={`flowchart TD
+    S[Settings class] --> C[model_config]
+    C --> E[env_file .env]
+    C --> V[environment variables]
+    C --> D[secrets_dir]
+    E --> M{{Merge sources}}
+    V --> M
+    D --> M
+    M --> O[Validated Settings object]
+    O --> A[Agent and the rest of the app]`}
+/>
+
+## How we use this in the sandbox
+
+In the `sandbox` directory the settings are a single, shared object.[^env] The API key field
+is required, so if you do not set it you get a clear error instead of a silent `None`. That
+lets the smoke tests decide for themselves whether to skip when the key is missing - which
+keeps them green even offline.
+
+<Callout kind="tip">
+Keep one settings instance at module level and import it wherever you need it. Creating a
+new `Settings()` on every call works, but it re-reads the `.env` file again and again. One
+constant is enough.
+</Callout>
+
+## What is next
+
+You now have a typed configuration that reads the environment and `.env`, groups related
+settings into nested models, and protects secrets. In the chapters ahead we wire these
+settings into a real agent and show how to override them in tests. The runnable,
+offline-safe example for this chapter lives in `sandbox/14-pydantic-settings`.
+
+[^env]: You keep the `.env` file with the `OLLAMA_CLOUD_API_KEY` in the repository root.
+Never commit it to git - add it to `.gitignore`.

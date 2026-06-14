@@ -1,0 +1,187 @@
+By default an agent returns plain text. That is fine for a demo, but in a real application
+you want data you can store in a database, pass to a function, or render in a UI without
+guessing what the model meant. In this chapter we force the model to return a structure that
+matches a Pydantic model, and Pydantic AI takes care of validation and any fixes along the way.
+
+The whole trick comes down to one parameter: `output_type`. You hand it a Pydantic model, and
+`result.output` stops being a string and becomes a finished, typed object.
+
+## From text to structure
+
+Define a <Term definition="A Pydantic model is a class that inherits from BaseModel and describes fields and their types. Pydantic validates input data against that definition.">Pydantic model</Term> and pass it as `output_type`. The model
+receives the JSON schema generated from that class and answers with data that fits it.
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+
+
+class Location(BaseModel):
+    city: str
+    country: str
+
+
+agent = Agent("openai:gpt-5.2", output_type=Location)
+
+result = agent.run_sync("Where were the 2012 Olympics held?")
+print(result.output)
+#> city='London' country='United Kingdom'
+print(type(result.output))
+#> <class '__main__.Location'>
+```
+
+`result.output` is now an instance of `Location`, not text. Your editor and type checker know
+it has `city` and `country` fields, both of type `str`. This is the same generics story from
+the agent chapter: `Agent[..., Location]` carries the output type with it.
+
+<Callout kind="key">
+The Pydantic model does two jobs at once here. First, its JSON schema tells the language model
+what the answer should look like. Second, that same definition validates whatever actually came
+back. One source of truth for both the prompt and the validation.
+</Callout>
+
+## What happens under the hood
+
+When you pass an `output_type`, the run gains an extra step. Pydantic AI takes the model's
+response, tries to parse it, and validates it against the schema. If that works, you get an
+object. If not, the agent still has a chance to fix the error.
+
+<RunFlow
+  title="A run with typed output"
+  nodes={[
+    { kind: "user", label: "Prompt", detail: "text from the user" },
+    { kind: "model", label: "Model", detail: "returns data per schema" },
+    { kind: "agent", label: "Validation", detail: "Pydantic checks fields" },
+    { kind: "output", label: "Output", detail: "a model instance" },
+  ]}
+/>
+
+## Validation and ModelRetry
+
+Pydantic validation works here exactly as it does everywhere else. If the model returns a field
+with the wrong type or omits a required one, validation fails. Pydantic AI does not give up right
+away: it sends the error message back to the model and asks for a corrected response. You control
+how many such attempts are allowed with the `retries` parameter.
+
+Sometimes you want a rule that types alone cannot express. That is what `@agent.output_validator`
+is for. If the data is unacceptable, raise `ModelRetry` with a description of the problem, and the
+model receives that text and tries again.
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, ModelRetry
+
+
+class Booking(BaseModel):
+    people: int
+    room: str
+
+
+agent = Agent(
+    "openai:gpt-5.2",
+    output_type=Booking,
+    retries=2,
+)
+
+
+@agent.output_validator
+def room_must_exist(booking: Booking) -> Booking:
+    available = {"A", "B", "C"}
+    if booking.room not in available:
+        raise ModelRetry(
+            f"Room {booking.room!r} does not exist. Pick one of: {sorted(available)}."
+        )
+    return booking
+
+
+result = agent.run_sync("Book room B for 4 people.")
+print(result.output)
+#> people=4 room='B'
+```
+
+<Callout kind="warning">
+`ModelRetry` only makes sense for errors the model can fix, such as a wrong room name or a value
+outside an allowed range. For a database outage or a permission failure, raise a normal exception.
+Retrying will not help there and only burns tokens.
+</Callout>
+
+## Three output modes
+
+Under the hood Pydantic AI can enforce structure in three ways. By default it picks the best one
+for the given model, but you can override it by wrapping the type in one of the markers.
+
+| Mode | Marker | How it works | When |
+| --- | --- | --- | --- |
+| Tool | `ToolOutput` | the model "calls a tool" shaped like the result | default, broad support |
+| Native | `NativeOutput` | the provider's native structured output | when the model supports it, most reliable |
+| Prompted | `PromptedOutput` | the schema is injected into the prompt as an instruction | models without tool or structured-output support |
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, NativeOutput
+
+
+class Location(BaseModel):
+    city: str
+    country: str
+
+
+# Force native structured output instead of the default tool mode.
+agent = Agent(
+    "openai:gpt-5.2",
+    output_type=NativeOutput(Location),
+)
+
+result = agent.run_sync("Where is the Eiffel Tower?")
+print(result.output)
+#> city='Paris' country='France'
+```
+
+The marker changes only the mechanism, not the output type itself.[^modes] `result.output` is
+still a `Location` instance. Start with the default and reach for `NativeOutput` or
+`PromptedOutput` only when a specific model requires it.
+
+## Unions and multiple types
+
+`output_type` also accepts a list of types or a union. That is handy when an agent might return
+one of several different answers. The model picks the matching variant, and you get back a typed
+object you can tell apart with `isinstance`.
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+
+
+class Success(BaseModel):
+    value: float
+
+
+class Failure(BaseModel):
+    reason: str
+
+
+agent = Agent("openai:gpt-5.2", output_type=[Success, Failure])
+
+result = agent.run_sync("What is 3 divided by 0?")
+print(result.output)
+#> reason='You cannot divide by zero.'
+```
+
+<Callout kind="tip">
+The "success or failure" pair is a handy pattern. Instead of catching an exception or parsing
+text, the agent returns one of two clearly described shapes, and ordinary Python code at the call
+site handles the rest.
+</Callout>
+
+## What is next
+
+You can now force an agent to return data that matches a Pydantic model, add your own validation
+with `ModelRetry`, and choose an output mode. In the next chapter we add tools, which let the
+agent fetch data during a run. The runnable code for this chapter lives in
+`sandbox/04-structured-output`.
+
+[^modes]: The full list of modes and their limits is described in the Output docs: https://pydantic.dev/docs/ai/output
