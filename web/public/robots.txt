@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://sircypkowskyy.github.io/pydantic-ai-custom-guide/sitemap.xml

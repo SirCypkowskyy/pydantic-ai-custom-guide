@@ -62,5 +62,27 @@ export function useDocumentMeta({ title, description, path, type, image }: Docum
     upsertMeta("twitter:title", fullTitle, "name");
     upsertMeta("twitter:description", desc, "name");
     upsertMeta("twitter:image", image ?? ogImage, "name");
+
+    // Per-article structured data for chapters.
+    let articleLd = document.head.querySelector<HTMLScriptElement>("#article-ld");
+    if (type === "article") {
+      if (!articleLd) {
+        articleLd = document.createElement("script");
+        articleLd.id = "article-ld";
+        articleLd.type = "application/ld+json";
+        document.head.appendChild(articleLd);
+      }
+      articleLd.textContent = JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        headline: fullTitle,
+        description: desc,
+        inLanguage: lang,
+        url,
+        isPartOf: { "@type": "Course", name: site.name },
+      });
+    } else if (articleLd) {
+      articleLd.remove();
+    }
   }, [title, description, path, type, image, lang]);
 }
