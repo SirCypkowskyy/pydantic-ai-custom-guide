@@ -57,7 +57,7 @@ export const chapters: Chapter[] = [
       { label: "Installation", url: `${AI}/overview/install` },
       { label: "Troubleshooting", url: `${AI}/overview/troubleshooting` },
     ],
-    sandbox: "01-instalacja",
+    sandbox: "01-installation",
   },
   {
     order: 2,
@@ -72,7 +72,7 @@ export const chapters: Chapter[] = [
       en: "What an Agent is, how to configure it, system prompts, and sync, async, and streaming runs.",
     },
     docs: [{ label: "Agents", url: `${AI}/core-concepts/agent` }],
-    sandbox: "02-agenty",
+    sandbox: "02-agents",
   },
   {
     order: 3,
@@ -90,7 +90,7 @@ export const chapters: Chapter[] = [
       { label: "Models", url: `${AI}/models/overview` },
       { label: "Ollama", url: `${AI}/models/ollama` },
     ],
-    sandbox: "03-modele",
+    sandbox: "03-models",
   },
   {
     order: 4,
@@ -120,7 +120,7 @@ export const chapters: Chapter[] = [
       en: "Give the agent tools: registration, argument validation, context, and tool error handling.",
     },
     docs: [{ label: "Tools", url: `${AI}/tools-toolsets/tools` }],
-    sandbox: "05-narzedzia",
+    sandbox: "05-tools",
   },
   {
     order: 6,
@@ -135,7 +135,7 @@ export const chapters: Chapter[] = [
       en: "The dependency injection system in pydantic-ai: typed context, resources, and testability.",
     },
     docs: [{ label: "Dependencies", url: `${AI}/core-concepts/dependencies` }],
-    sandbox: "06-zaleznosci",
+    sandbox: "06-dependencies",
   },
   {
     order: 7,
@@ -150,7 +150,7 @@ export const chapters: Chapter[] = [
       en: "Message structure, multi-turn conversations, and passing history between runs.",
     },
     docs: [{ label: "Messages", url: `${AI}/core-concepts/message-history` }],
-    sandbox: "07-wiadomosci-historia",
+    sandbox: "07-messages-history",
   },
   {
     order: 8,
@@ -216,7 +216,7 @@ export const chapters: Chapter[] = [
       { label: "Testing", url: `${AI}/guides/testing` },
       { label: "Evals", url: `${AI}/evals/evals` },
     ],
-    sandbox: "11-testy-ewaluacje",
+    sandbox: "11-testing-evals",
   },
   {
     order: 12,
@@ -249,7 +249,7 @@ export const chapters: Chapter[] = [
       { label: "Pydantic docs", url: "https://pydantic.dev/docs/validation" },
       { label: "llms-full.txt", url: "https://pydantic.dev/docs/validation/latest/llms-full.txt" },
     ],
-    sandbox: "13-pydantic-walidacja",
+    sandbox: "13-pydantic-validation",
   },
   {
     order: 14,
@@ -284,7 +284,7 @@ export const chapters: Chapter[] = [
       { label: "FastAPI", url: "https://fastapi.tiangolo.com" },
       { label: "Pydantic AI", url: `${AI}/core-concepts/agent` },
     ],
-    sandbox: "15-fastapi-integracja",
+    sandbox: "15-fastapi-integration",
   },
   {
     order: 16,
@@ -303,7 +303,7 @@ export const chapters: Chapter[] = [
       { label: "Hooks", url: `${AI}/core-concepts/hooks` },
       { label: "Extensibility", url: `${AI}/guides/extensibility` },
     ],
-    sandbox: "16-capabilities-hooki",
+    sandbox: "16-capabilities-hooks",
   },
   {
     order: 17,
@@ -323,7 +323,7 @@ export const chapters: Chapter[] = [
       { label: "Native tools", url: `${AI}/tools-toolsets/native-tools` },
       { label: "Common tools", url: `${AI}/tools-toolsets/common-tools` },
     ],
-    sandbox: "17-zaawansowane-narzedzia",
+    sandbox: "17-advanced-tools",
   },
   {
     order: 18,
@@ -341,7 +341,7 @@ export const chapters: Chapter[] = [
       { label: "Input", url: `${AI}/advanced-features/input` },
       { label: "Thinking", url: `${AI}/advanced-features/thinking` },
     ],
-    sandbox: "18-multimodal-myslenie",
+    sandbox: "18-multimodal-thinking",
   },
   {
     order: 19,
@@ -356,10 +356,30 @@ export const chapters: Chapter[] = [
       en: "Embeddings, vector retrieval, and building a simple RAG with reranking.",
     },
     docs: [{ label: "Embeddings", url: `${AI}/guides/embeddings` }],
-    sandbox: "19-embeddingi-rag",
+    sandbox: "19-embeddings-rag",
   },
   {
     order: 20,
+    slug: "interfejsy-ui",
+    icon: "AppWindow",
+    difficulty: "advanced",
+    minutes: 22,
+    partId: "advanced",
+    title: { pl: "Interfejsy i integracja z UI", en: "Interfaces & UI integration" },
+    summary: {
+      pl: "Wystaw agenta do frontendu: protokoły AG-UI i Vercel AI, integracja z Next.js i SPA oraz wbudowany czat.",
+      en: "Expose the agent to a frontend: the AG-UI and Vercel AI protocols, Next.js and SPA integration, and the built-in chat.",
+    },
+    docs: [
+      { label: "UI overview", url: `${AI}/integrations/ui/overview` },
+      { label: "AG-UI", url: `${AI}/integrations/ui/ag-ui` },
+      { label: "Vercel AI", url: `${AI}/integrations/ui/vercel-ai` },
+      { label: "Web chat UI", url: `${AI}/guides/web` },
+    ],
+    sandbox: "20-ui-integration",
+  },
+  {
+    order: 21,
     slug: "asystent-jak-claude",
     icon: "Bot",
     difficulty: "advanced",
@@ -376,7 +396,7 @@ export const chapters: Chapter[] = [
       { label: "MCP", url: `${AI}/mcp/client` },
       { label: "Toolsets", url: `${AI}/tools-toolsets/toolsets` },
     ],
-    sandbox: "20-asystent-jak-claude",
+    sandbox: "21-claude-like-assistant",
   },
 ];
 

@@ -170,7 +170,7 @@ always wrap the endpoint call in `override`.
 You now have a pattern that moves an agent from a notebook into a real service: one agent per process,
 validated requests, structured responses, streaming, and a fast offline test. In the next chapter we
 turn to observability, that is, how to see what the agent does under the hood in production. The working
-app together with its `TestClient` test lives in `sandbox/15-fastapi-integracja`.
+app together with its `TestClient` test lives in `sandbox/15-fastapi-integration`.
 
 [^validation]: When the request body does not satisfy the `AskRequest` model, FastAPI returns a 422
 status with a description of the validation errors on its own. You do not write any code for that.

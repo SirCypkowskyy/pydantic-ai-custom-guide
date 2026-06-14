@@ -1,6 +1,0 @@
-[project]
-name = "ch06-zaleznosci"
-version = "0.1.0"
-description = "Chapter 6: Dependencies (DI) - typed deps through RunContext."
-requires-python = ">=3.12"
-dependencies = ["pydantic-ai>=1.0", "pai-sandbox-shared"]

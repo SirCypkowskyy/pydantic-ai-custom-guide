@@ -77,4 +77,6 @@ export const pl = {
   "footer.builtWith": "Zbudowano z",
   "footer.sourceOnGitHub": "Kod źródłowy na GitHub",
   "footer.notAffiliated": "Nieoficjalny przewodnik społecznościowy.",
+  "footer.author": "Autor:",
+  "footer.withClaude": "z pomocą Claude Code",
 } as const;

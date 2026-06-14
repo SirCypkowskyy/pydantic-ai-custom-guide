@@ -1,0 +1,6 @@
+[project]
+name = "ch03-models"
+version = "0.1.0"
+description = "Chapter 3: Models and providers - configuring backends behind an agent."
+requires-python = ">=3.12"
+dependencies = ["pydantic-ai>=1.0", "pai-sandbox-shared"]

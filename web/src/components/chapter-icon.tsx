@@ -1,5 +1,6 @@
 import {
   Activity,
+  AppWindow,
   Boxes,
   Braces,
   Database,
@@ -47,6 +48,7 @@ const ICONS: Record<string, IconComponent> = {
   PencilRuler,
   Image,
   Database,
+  AppWindow,
 };
 
 interface ChapterIconProps {

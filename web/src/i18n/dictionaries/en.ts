@@ -80,4 +80,6 @@ export const en: Record<keyof typeof pl, string> = {
   "footer.builtWith": "Built with",
   "footer.sourceOnGitHub": "Source on GitHub",
   "footer.notAffiliated": "An unofficial community guide.",
+  "footer.author": "By",
+  "footer.withClaude": "with Claude Code",
 };

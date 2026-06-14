@@ -1,0 +1,181 @@
+When you build a chat or another interactive frontend for an agent, the backend has to accept
+input from the browser (a message or the full history) and stream the agent's events back:
+text, thinking, and tool calls. That is how the user sees what is happening in real time.
+Pydantic AI ships a layer for exactly this, so you do not have to invent your own protocol.
+
+## Two protocols, one adapter
+
+A frontend could read raw Pydantic AI events, but it is easier to use a protocol your
+framework understands natively. Pydantic AI supports two such UI event stream protocols:
+
+- <Term definition="An open standard from the CopilotKit team for frontend-to-agent communication: streaming, frontend tools, and shared state.">AG-UI</Term> (Agent-User Interaction),
+- <Term definition="Vercel's AI SDK data stream protocol, consumed by hooks such as useChat.">Vercel AI Data Stream</Term>.
+
+Both integrations are subclasses of the abstract `UIAdapter` class: `AGUIAdapter` and
+`VercelAIAdapter`. An adapter does three things: it turns the frontend input into arguments
+for `run_stream_events()`, runs the agent, and translates Pydantic AI events into the
+protocol's events.
+
+<Mermaid
+  caption="The adapter is the bridge between frontend and agent"
+  chart={`flowchart LR
+    F[Frontend] -->|input| AD[UIAdapter]
+    AD -->|run_stream_events| AG[Agent]
+    AG -->|events| AD
+    AD -->|protocol SSE| F`}
+/>
+
+## The simplest path: FastAPI and dispatch_request
+
+If you use a Starlette-based framework such as FastAPI, a single class method
+`dispatch_request()` handles the whole request and returns a streaming response of protocol
+events. It really is a few lines.
+
+```python
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+agent = Agent("openai:gpt-5.2")
+app = FastAPI()
+
+
+@app.post("/chat")
+async def chat(request: Request) -> Response:
+    return await VercelAIAdapter.dispatch_request(request, agent=agent)
+```
+
+`dispatch_request()` also takes the same optional arguments as `run_stream_events()` and an
+`on_complete` callback that receives the finished `AgentRunResult` and can yield extra events.
+The same pattern works for `AGUIAdapter`; just swap the class.
+
+## Full-stack with Next.js and the Vercel AI SDK
+
+For a full-stack Next.js app, the Vercel protocol is the least work. The backend exposes a
+`VercelAIAdapter`, and the frontend uses the `useChat` hook from AI SDK UI. You can also reach
+for the pre-built AI Elements components.
+
+<Callout kind="note">
+By default the adapter targets AI SDK version 5, for backwards compatibility. If you want the
+features introduced in version 6, set `sdk_version=6` on the adapter.
+</Callout>
+
+```tsx
+// app/page.tsx (Next.js, AI SDK UI)
+"use client";
+import { useChat } from "@ai-sdk/react";
+
+export default function Chat() {
+  const { messages, sendMessage } = useChat({ api: "/chat" });
+  return (
+    <div>
+      {messages.map((m) => (
+        <p key={m.id}>{m.role}: {m.parts.map((p) => (p.type === "text" ? p.text : "")).join("")}</p>
+      ))}
+      <button type="button" onClick={() => sendMessage({ text: "Hello" })}>
+        Send
+      </button>
+    </div>
+  );
+}
+```
+
+The frontend posts messages to the `/chat` endpoint, and the backend adapter streams the reply
+in a format `useChat` understands with no extra configuration.
+
+## AG-UI for CopilotKit
+
+If your frontend is built on AG-UI (for example through CopilotKit), use `AGUIAdapter` the same
+way. AG-UI adds frontend tools and shared state to the stream, so it suits richer agentic
+interfaces.
+
+```python
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+agent = Agent("openai:gpt-5.2")
+app = FastAPI()
+
+
+@app.post("/agui")
+async def agui(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent)
+```
+
+Install the dependencies with the `ag-ui` extra:
+
+```bash
+uv add 'pydantic-ai-slim[ag-ui]'
+```
+
+## SPA: your own SSE stream
+
+A single-page app, like this site, does not have to use a ready-made hook. The adapter can
+hand back the raw event stream as <Term definition="Server-Sent Events: a one-way stream of events from server to browser over plain HTTP.">SSE</Term>,
+and your frontend reads it with a plain `fetch`. When you need full control over input or
+output, you build the adapter by hand and chain its methods.
+
+```python
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import StreamingResponse
+
+from pydantic_ai import Agent
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+agent = Agent("openai:gpt-5.2")
+app = FastAPI()
+
+
+@app.post("/stream")
+async def stream(request: Request) -> StreamingResponse:
+    adapter = await VercelAIAdapter.from_request(request, agent=agent)
+    events = adapter.run_stream()
+    return StreamingResponse(adapter.encode_stream(events), media_type="text/event-stream")
+```
+
+On the SPA side you receive these events as a stream and append text chunks to the view as
+they arrive.
+
+```ts
+const response = await fetch("/stream", {
+  method: "POST",
+  body: JSON.stringify({ messages }),
+});
+const reader = response.body!.getReader();
+const decoder = new TextDecoder();
+let done = false;
+while (!done) {
+  const chunk = await reader.read();
+  done = chunk.done;
+  if (chunk.value) render(decoder.decode(chunk.value));
+}
+```
+
+<Callout kind="tip">
+For non-Starlette frameworks (Django, Flask) or when you want full control, use
+`build_run_input()`, the `UIAdapter(...)` constructor, then `run_stream()` and
+`encode_stream()`. Same building blocks, assembled by hand.
+</Callout>
+
+## A quick preview: the built-in chat
+
+Before you wire up a real frontend, you can try the agent in the browser with the built-in
+chat. The `clai web` command from the CLI package launches a ready-made interface where you
+talk to the agent without writing a line of frontend code. It is a handy way to check behavior
+quickly.[^web]
+
+## What is next
+
+A working backend with the Vercel AI adapter, ready to plug into `useChat` or your own SPA,
+lives in `sandbox/20-ui-integration`. From there it is a short path to a full chat: add a
+frontend, and streaming, tools, and history already work.
+
+[^web]: The built-in chat and `clai web` are described on the "Web Chat UI" page of the Pydantic AI docs.

@@ -1,6 +1,0 @@
-[project]
-name = "ch07-wiadomosci-historia"
-version = "0.1.0"
-description = "Chapter 7: Messages and history - multi-turn conversations and serialization."
-requires-python = ">=3.12"
-dependencies = ["pydantic-ai>=1.0", "pai-sandbox-shared"]

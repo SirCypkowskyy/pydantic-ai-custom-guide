@@ -35,6 +35,12 @@ export function SiteFooter() {
           >
             {t("nav.playground")}
           </Link>
+          <Link
+            to="/about"
+            className="text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {t("nav.about")}
+          </Link>
           <a
             href={`${import.meta.env.BASE_URL}llms.txt`}
             className="text-muted-foreground transition-colors hover:text-foreground"
@@ -53,10 +59,24 @@ export function SiteFooter() {
         </nav>
       </div>
       <div className="border-t">
-        <p className="mx-auto flex w-full max-w-6xl items-center gap-1.5 px-5 py-4 text-xs text-muted-foreground">
-          {t("footer.builtWith")} React, Vite, shadcn/ui, animate-ui
-          <Heart className="size-3 fill-primary text-primary" animateOnView />
-        </p>
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 px-5 py-4 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <p className="inline-flex items-center gap-1.5">
+            {t("footer.builtWith")} React, Vite, shadcn/ui, animate-ui
+            <Heart className="size-3 fill-primary text-primary" animateOnView />
+          </p>
+          <p>
+            {t("footer.author")}{" "}
+            <a
+              href={site.author.site}
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-foreground transition-colors hover:text-primary"
+            >
+              {site.author.name}
+            </a>{" "}
+            {t("footer.withClaude")}
+          </p>
+        </div>
       </div>
     </footer>
   );

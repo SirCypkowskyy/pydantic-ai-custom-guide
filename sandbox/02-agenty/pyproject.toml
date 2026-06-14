@@ -1,6 +1,0 @@
-[project]
-name = "ch02-agenty"
-version = "0.1.0"
-description = "Chapter 2: Agents - the central object of Pydantic AI."
-requires-python = ">=3.12"
-dependencies = ["pydantic-ai>=1.0", "pai-sandbox-shared"]

@@ -1,6 +1,0 @@
-[project]
-name = "ch19-embeddingi-rag"
-version = "0.1.0"
-description = "Chapter 19: Embeddings and RAG - retrieve relevant context, then answer with an agent."
-requires-python = ">=3.12"
-dependencies = ["pydantic-ai>=1.0", "pai-sandbox-shared"]

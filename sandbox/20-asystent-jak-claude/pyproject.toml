@@ -1,6 +1,0 @@
-[project]
-name = "ch16-asystent-jak-claude"
-version = "0.1.0"
-description = "Chapter 16: a Claude-like assistant - skills as toolsets, MCP, and human-in-the-loop approval."
-requires-python = ">=3.12"
-dependencies = ["pydantic-ai>=1.0", "pai-sandbox-shared"]

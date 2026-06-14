@@ -4,26 +4,27 @@ requires-python = ">=3.12"
 
 [manifest]
 members = [
-    "ch01-instalacja",
-    "ch02-agenty",
-    "ch03-modele",
+    "ch01-installation",
+    "ch02-agents",
+    "ch03-models",
     "ch04-structured-output",
-    "ch05-narzedzia",
-    "ch06-zaleznosci",
-    "ch07-wiadomosci-historia",
+    "ch05-tools",
+    "ch06-dependencies",
+    "ch07-messages-history",
     "ch08-streaming",
     "ch09-mcp",
     "ch10-multi-agent",
-    "ch11-testy-ewaluacje",
+    "ch11-testing-evals",
     "ch12-logfire-observability",
-    "ch13-pydantic-walidacja",
+    "ch13-pydantic-validation",
     "ch14-pydantic-settings",
-    "ch15-fastapi-integracja",
-    "ch16-asystent-jak-claude",
-    "ch16-capabilities-hooki",
-    "ch17-zaawansowane-narzedzia",
-    "ch18-multimodal-myslenie",
-    "ch19-embeddingi-rag",
+    "ch15-fastapi-integration",
+    "ch16-capabilities-hooks",
+    "ch17-advanced-tools",
+    "ch18-multimodal-thinking",
+    "ch19-embeddings-rag",
+    "ch20-ui-integration",
+    "ch21-claude-like-assistant",
     "pai-sandbox-shared",
     "pydantic-ai-sandbox",
 ]
@@ -401,9 +402,9 @@ wheels = [
 ]
 
 [[package]]
-name = "ch01-instalacja"
+name = "ch01-installation"
 version = "0.1.0"
-source = { virtual = "01-instalacja" }
+source = { virtual = "01-installation" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },
@@ -416,9 +417,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ch02-agenty"
+name = "ch02-agents"
 version = "0.1.0"
-source = { virtual = "02-agenty" }
+source = { virtual = "02-agents" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },
@@ -431,9 +432,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ch03-modele"
+name = "ch03-models"
 version = "0.1.0"
-source = { virtual = "03-modele" }
+source = { virtual = "03-models" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },
@@ -461,9 +462,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ch05-narzedzia"
+name = "ch05-tools"
 version = "0.1.0"
-source = { virtual = "05-narzedzia" }
+source = { virtual = "05-tools" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },
@@ -476,9 +477,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ch06-zaleznosci"
+name = "ch06-dependencies"
 version = "0.1.0"
-source = { virtual = "06-zaleznosci" }
+source = { virtual = "06-dependencies" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },
@@ -491,9 +492,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ch07-wiadomosci-historia"
+name = "ch07-messages-history"
 version = "0.1.0"
-source = { virtual = "07-wiadomosci-historia" }
+source = { virtual = "07-messages-history" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },
@@ -555,9 +556,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ch11-testy-ewaluacje"
+name = "ch11-testing-evals"
 version = "0.1.0"
-source = { virtual = "11-testy-ewaluacje" }
+source = { virtual = "11-testing-evals" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },
@@ -589,9 +590,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ch13-pydantic-walidacja"
+name = "ch13-pydantic-validation"
 version = "0.1.0"
-source = { virtual = "13-pydantic-walidacja" }
+source = { virtual = "13-pydantic-validation" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },
@@ -621,9 +622,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ch15-fastapi-integracja"
+name = "ch15-fastapi-integration"
 version = "0.1.0"
-source = { virtual = "15-fastapi-integracja" }
+source = { virtual = "15-fastapi-integration" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
@@ -642,9 +643,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ch16-asystent-jak-claude"
+name = "ch16-capabilities-hooks"
 version = "0.1.0"
-source = { virtual = "20-asystent-jak-claude" }
+source = { virtual = "16-capabilities-hooks" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },
@@ -657,9 +658,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ch16-capabilities-hooki"
+name = "ch17-advanced-tools"
 version = "0.1.0"
-source = { virtual = "16-capabilities-hooki" }
+source = { virtual = "17-advanced-tools" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },
@@ -672,9 +673,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ch17-zaawansowane-narzedzia"
+name = "ch18-multimodal-thinking"
 version = "0.1.0"
-source = { virtual = "17-zaawansowane-narzedzia" }
+source = { virtual = "18-multimodal-thinking" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },
@@ -687,9 +688,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ch18-multimodal-myslenie"
+name = "ch19-embeddings-rag"
 version = "0.1.0"
-source = { virtual = "18-multimodal-myslenie" }
+source = { virtual = "19-embeddings-rag" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },
@@ -702,9 +703,28 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ch19-embeddingi-rag"
+name = "ch20-ui-integration"
 version = "0.1.0"
-source = { virtual = "19-embeddingi-rag" }
+source = { virtual = "20-ui-integration" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "pai-sandbox-shared" },
+    { name = "pydantic-ai" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.110" },
+    { name = "pai-sandbox-shared", editable = "shared" },
+    { name = "pydantic-ai", specifier = ">=1.0" },
+    { name = "uvicorn", specifier = ">=0.30" },
+]
+
+[[package]]
+name = "ch21-claude-like-assistant"
+version = "0.1.0"
+source = { virtual = "21-claude-like-assistant" }
 dependencies = [
     { name = "pai-sandbox-shared" },
     { name = "pydantic-ai" },

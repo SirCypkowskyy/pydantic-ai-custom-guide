@@ -1,0 +1,6 @@
+[project]
+name = "ch20-ui-integration"
+version = "0.1.0"
+description = "Chapter 20: exposing the agent to a frontend with the Vercel AI adapter."
+requires-python = ">=3.12"
+dependencies = ["pydantic-ai>=1.0", "pai-sandbox-shared", "fastapi>=0.110", "uvicorn>=0.30"]

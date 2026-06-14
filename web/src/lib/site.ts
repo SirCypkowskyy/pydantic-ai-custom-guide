@@ -11,8 +11,10 @@ export const site = {
   repoUrl: "https://github.com/SirCypkowskyy/pydantic-ai-custom-guide",
   sandboxUrl: "https://github.com/SirCypkowskyy/pydantic-ai-custom-guide/tree/main/sandbox",
   author: {
-    name: "SirCypkowskyy",
-    url: "https://github.com/SirCypkowskyy",
+    name: "Cyprian Gburek",
+    handle: "SirCypkowskyy",
+    site: "https://gburek.dev",
+    github: "https://github.com/SirCypkowskyy",
   },
   /** Updated whenever the content is reviewed against upstream docs. */
   contentDate: "2026-06",

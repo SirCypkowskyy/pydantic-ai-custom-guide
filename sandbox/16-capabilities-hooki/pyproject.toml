@@ -1,6 +1,0 @@
-[project]
-name = "ch16-capabilities-hooki"
-version = "0.1.0"
-description = "Chapter 16: Capabilities and hooks - bundling behavior and intercepting the run lifecycle."
-requires-python = ">=3.12"
-dependencies = ["pydantic-ai>=1.0", "pai-sandbox-shared"]
